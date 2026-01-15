@@ -12,7 +12,7 @@ layout(location = 0) out vec4 outColor;
 
 layout(location = 0) in vec2 position;
 
-layout(push_constant) uniform Push () {
+layout(push_constant) uniform Push {
 	float time;
 } pushData;
 
@@ -46,7 +46,7 @@ void main() {
 	float colorY = float(bitY) / 255.0;
 
 	outColor = vec4(
-				colorX,
+				fract(colorX + pushData.time),
 				colorY,
 				0.5,
 				1.0);

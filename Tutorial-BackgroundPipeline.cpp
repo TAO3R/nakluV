@@ -41,7 +41,118 @@ void Tutorial::BackgroundPipeline::create(RTG& rtg, VkRenderPass render_pass, ui
 		};
 
 		VK(vkCreatePipelineLayout(rtg.device, &create_info, nullptr, &layout));
-	}
+	}	// end of create pipeline layout
+
+	{	// create pipeline
+		std::array<VkPipelineShaderStageCreateInfo, 2> stages{
+			VkPipelineShaderStageCreateInfo{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.stage = VK_SHADER_STAGE_VERTEX_BIT,
+				.module = vert_module,
+				.pName = "main",
+		},
+			VkPipelineShaderStageCreateInfo{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+				.module = frag_module,
+				.pName = "main",
+			},
+		};
+
+		// the dynamic state structure to indicate that the viewport and scissor state will be set at runtime for the pipeline:
+		std::vector<VkDynamicState> dynamic_states{
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR,
+		};
+		VkPipelineDynamicStateCreateInfo dynamic_state{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+			.dynamicStateCount = uint32_t(dynamic_states.size()),
+			.pDynamicStates = dynamic_states.data(),
+		};
+
+		// a vertex input state structure that indicates that this pipeline will take no per-vertex inputs:
+		VkPipelineVertexInputStateCreateInfo vertex_input_state{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+			.vertexBindingDescriptionCount = 0,
+			.pVertexBindingDescriptions = nullptr,
+			.vertexAttributeDescriptionCount = 0,
+			.pVertexAttributeDescriptions = nullptr,
+		};
+
+		// an input assembly state structure that tells Vulkan that this pipeline will draw triangles from a list
+		VkPipelineInputAssemblyStateCreateInfo input_assembly_state{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+			.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+			.primitiveRestartEnable = VK_FALSE,
+		};
+
+		// a viewport state structure that says this pipeline only renders to one viewport and one scissor rectangle
+		VkPipelineViewportStateCreateInfo viewport_state{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+			.viewportCount = 1,
+			.scissorCount = 1,
+		};
+
+		// configure the rasterizer to cull back faces (front faces are oriented counterclockwise), and to fill polygons
+		VkPipelineRasterizationStateCreateInfo rasterization_state{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+			.depthClampEnable = VK_FALSE,
+			.rasterizerDiscardEnable = VK_FALSE,
+			.polygonMode = VK_POLYGON_MODE_FILL,
+			.cullMode = VK_CULL_MODE_BACK_BIT,
+			.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+			.depthBiasEnable = VK_FALSE,
+			.lineWidth = 1.0f,
+		};
+
+		// disable multisampling
+		VkPipelineMultisampleStateCreateInfo multisample_state{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+			.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+			.sampleShadingEnable = VK_FALSE,
+		};
+
+		// disable depth and stencil tests
+		VkPipelineDepthStencilStateCreateInfo depth_stencil_state{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+			.depthTestEnable = VK_FALSE,
+			.depthBoundsTestEnable = VK_FALSE,
+			.stencilTestEnable = VK_FALSE,
+		};
+
+		// disable color blending for the one color attachment
+		std::array<VkPipelineColorBlendAttachmentState, 1> attachment_states{
+			VkPipelineColorBlendAttachmentState{
+				.blendEnable = VK_FALSE,
+				.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
+			}
+		};
+
+		// reference all parameters specified in one large parameter structure and actually create the pipeline
+		VkGraphicsPipelineCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+			.stageCount = uint32_t(stages.size()),
+			.pStages = stages.data(),
+			.pVertexInputState = &vertex_input_state,
+			.pInputAssemblyState = &input_assembly_state,
+			.pViewportState = &viewport_state,
+			.pRasterizationState = &rasterization_state,
+			.pMultisampleState = &multisample_state,
+			.pDepthStencilState = &depth_stencil_state,
+			.pDynamicState = &dynamic_state,
+			.layout = layout,
+			.renderPass = render_pass,
+			.subpass = subpass,
+		};
+
+		// null handle being passed as the second parameter is a reference to an optional pipeline cache
+		VK(vkCreateGraphicsPipelines(rtg.device, VK_NULL_HANDLE, 1, &create_info, nullptr, &handle));
+
+		// de-alocating the shader modules now that pipeline is created
+		vkDestroyShaderModule(rtg.device, frag_module, nullptr);
+		vkDestroyShaderModule(rtg.device, vert_module, nullptr);
+
+	}	// end of create pipeline
 
 }
 

@@ -127,6 +127,13 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			// any subsequent draw commands should use our freshly created background pipeline
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, background_pipeline.handle);	// State commands
 
+			{	// push time:
+				BackgroundPipeline::Push push{
+					.time = time,
+				};
+				vkCmdPushConstants(workspace.command_buffer, background_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+			}
+
 			// Action command, uses parameters set by state commands, runs the pipeline for - reading the parameters -
 			// 3 vertices and 1 instance, starting at vertex 0 and instance 0 - draws exactly one triangle
 			vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
