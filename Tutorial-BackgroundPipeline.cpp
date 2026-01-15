@@ -2,6 +2,7 @@
 
 #include "Helpers.hpp"
 #include "refsol.hpp"
+#include "VK.hpp"
 
 
 // static (local to this object file) buffers of SPIR-V code from .inl files
@@ -23,7 +24,25 @@ void Tutorial::BackgroundPipeline::create(RTG& rtg, VkRenderPass render_pass, ui
 
 	// shader modules passed to the pipeline creation function, used as the shaders in the created pipeline
 	// the refsol pipeline creation function uses compiled-in SPIR-V buffers when VK_NULL_HANDLE is passed for the module parameters
-	refsol::BackgroundPipeline_create(rtg, render_pass, subpass, vert_module, frag_module, &layout, &handle);
+	// refsol::BackgroundPipeline_create(rtg, render_pass, subpass, vert_module, frag_module, &layout, &handle);
+	{	// create pipeline layout
+		VkPushConstantRange range{
+			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			.offset = 0,
+			.size = sizeof(Push),
+		};
+
+		VkPipelineLayoutCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,	// want this push constant to be accessible in the fragment shader
+			.setLayoutCount = 0,
+			.pSetLayouts = nullptr,
+			.pushConstantRangeCount = 1,
+			.pPushConstantRanges = &range,
+		};
+
+		VK(vkCreatePipelineLayout(rtg.device, &create_info, nullptr, &layout));
+	}
+
 }
 
 void Tutorial::BackgroundPipeline::destroy(RTG& rtg) {

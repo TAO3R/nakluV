@@ -38,8 +38,10 @@ struct Tutorial : RTG::Application {
 		// no descriptor set layouts
 
 
-		// no push constants
-
+		// push constants
+		struct Push {
+			float time;
+		};
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 
@@ -71,6 +73,8 @@ struct Tutorial : RTG::Application {
 
 	virtual void update(float dt) override;
 	virtual void on_input(InputEvent const &) override;
+
+	float time = 0.0f;
 
 	//--------------------------------------------------------------------
 	//Rendering function, uses all the resources above to queue work to draw a frame:
