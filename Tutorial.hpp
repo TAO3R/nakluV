@@ -32,6 +32,26 @@ struct Tutorial : RTG::Application {
 	};
 	std::vector< Workspace > workspaces;
 
+	// a struct that manages a 'VkPipelineLayout' which gives the type of the global inputs to the pipeline,
+	// as well as a handle to the pipeline itself
+	struct BackgroundPipeline {
+		// no descriptor set layouts
+
+
+		// no push constants
+
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+
+		// no vertex bindings
+
+
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
+		void destroy(RTG &);
+	} background_pipeline;
+
 	//-------------------------------------------------------------------
 	//static scene resources:
 
