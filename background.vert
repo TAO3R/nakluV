@@ -12,5 +12,6 @@ void main() {
 	);											// clip-space coordinates (-1, -1), (-1, 3), (3, -1)
 	gl_Position = vec4(POSITION, 0.0, 1.0);		// Z = 0 -> on the near plane, W = 1 -> normal clip-space coordinate, no perspective distortion
 
+	// can be interpreted as barycentric coordinates to interpolate values between vertices to their values at fragments
 	position = POSITION * 0.5 + 0.5;	// make the screen [0, 1] * [0, 1]
 }

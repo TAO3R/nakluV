@@ -16,6 +16,15 @@ layout(push_constant) uniform Push {
 	float time;
 } pushData;
 
+// hash
+float hash(float n) {
+	return fract(sin(n) * 920834.4273498);
+}
+
+float hash(vec2 p) {
+	return fract(sin(dot(p, vec2(12789.1, 829.7867))) * 98034.323);
+}
+
 void main() {
 	// sets 'outColor' as a function of 'gl_FragCoord'
 	// step based
@@ -34,21 +43,44 @@ void main() {
 	//		1.0							
 	//	);
 
-	// relies on barycentric coordinates to interpolate values between vertices to their values at fragments
 	int scale = 255;
 	int x = int(position.x * scale);	// 0 - 255
 	int y = int(position.y * scale);	// 0 - 255
 
-	int bitX = x & 31;
-	int bitY = y & 224;
+	int bitX = x & 15;
+	int bitY = y & 240;
 
 	float colorX = float(bitX) / 255.0;
 	float colorY = float(bitY) / 255.0;
 
+
+
+	float slice = floor(position.y * 40.0);     // number of horizontal bands
+	float rnd   = hash(slice + floor(pushData.time * 10.0));
+
+	float glitchStrength = step(0.85, rnd);     // occasional glitch
+	float offset = glitchStrength * (rnd - 0.5) * 0.1;
+
+	vec2 glitchPos = position;
+	// glitchPos.x += offset;
+
+	vec2 block = floor(position * vec2(20.0, 12.0));
+	float blockNoise = hash(block + floor(pushData.time * 5.0));
+
+	float blockGlitch = step(0.9, blockNoise);
+	vec2 blockOffset = vec2(
+		(hash(block + 1.0) - 0.5) * 0.2,
+		0.0
+	);
+
+	glitchPos += blockOffset * blockGlitch;
+	
+
 	outColor = vec4(
-				fract(colorX + pushData.time),
-				colorY,
-				0.5,
+				glitchPos,
+				abs(sin(0.5 + pushData.time)),
 				1.0);
+
+
 
 }	// end of main
