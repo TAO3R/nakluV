@@ -32,8 +32,8 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-			.flags = 0,
-			.maxSets = 1,
+			.flags = 0,	// because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors alocated from this pool
+			.maxSets = 1 * per_workspace,	// one set per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -59,10 +59,44 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			Helpers::Unmapped	// don't get a pointer to the memory
 		);
 
-		// TODO: descriptor set
+		{	// allocate descriptor set for Camera descriptor:
+			VkDescriptorSetAllocateInfo alloc_info {
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &lines_pipeline.set0_Camera,
+			};
 
-		// TODO: descriptor write
+			VK(vkAllocateDescriptorSets(rtg.device,	 &alloc_info, &workspace.Camera_descriptors));
+		}
+		
+		{	// point descriptor to Camera buffer:
+			VkDescriptorBufferInfo Camera_info {
+				.buffer = workspace.Camera.handle,
+				.offset = 0,
+				.range = workspace.Camera.size,
+			};
 
+			std::array<VkWriteDescriptorSet, 1> writes {
+				VkWriteDescriptorSet {
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Camera_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+					.pBufferInfo = &Camera_info,
+				},
+			};
+
+			vkUpdateDescriptorSets (
+				rtg.device,					// device
+				uint32_t(writes.size()),	// descriptorWriteCount
+				writes.data(),				// pDescriptorWrites
+				0,							// descriptorCopyCount
+				nullptr						// pDescriptorCopies
+			);
+		}
 	}
 }
 
@@ -198,6 +232,25 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 	}	// end of line buffers resize
 
+	{	// upload camera info:
+		LinesPipeline::Camera camera {
+			.CLIP_FROM_WORLD = CLIP_FROM_WORLD
+		};
+		assert(workspace.Camera_src.size == sizeof(camera));
+
+		// host-side copy into Camera_src:
+		memcpy(workspace.Camera_src.allocation.data(), &camera, sizeof(camera));
+
+		// add device-side copy from Camera_src -> Camera:
+		assert(workspace.Camera_src.size == workspace.Camera.size);
+		VkBufferCopy copy_region {
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = workspace.Camera_src.size,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.Camera_src.handle, workspace.Camera.handle, 1, &copy_region);
+	}
+
 	{	// memory barrier to make sure copies complete before rendering happens:
 		VkMemoryBarrier memory_barrier{
 			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -287,10 +340,23 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
 		}
 
+		{	// bind Camera descriptor set:
+			std::array<VkDescriptorSet, 1> descriptor_sets {
+				workspace.Camera_descriptors,	// 0： Camera
+			};
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer,	// command buffer
+				VK_PIPELINE_BIND_POINT_GRAPHICS,	// pipeline bind point
+				lines_pipeline.layout,	// pipeline layout
+				0,	// first set
+				uint32_t(descriptor_sets.size()), descriptor_sets.data(),	// descriptor sets count, ptr
+				0, nullptr	// dynamic offsets count, ptr
+			);
+		}
+
+		// draw lines vertices:
 		vkCmdEndRenderPass(workspace.command_buffer);
 	}
-
-
 
 	// end recording:
 	VK(vkEndCommandBuffer(workspace.command_buffer));
@@ -341,37 +407,228 @@ void Tutorial::update(float dt) {
 	}
 
 	{	// make some crossing lines at different depths：
+		// lines_vertices.clear();
+		// constexpr size_t count = 2 * 30 + 2 * 30;
+		// lines_vertices.reserve(count);
+		
+		// // horizontal lines at z = 0,5f;
+		// for (uint32_t i = 0; i < 30; i++) {
+		// 	float y = (i + 0.5f) / 30.0f * 2.0f - 1.0f;
+		// 	lines_vertices.emplace_back(PosColVertex{
+		// 		.Position{.x = -1.0f, .y = y, .z = 0.5f},
+		// 		.Color{.r = 0xff, .g = 0xff, .b = 0x00, .a = 0xff},
+		// 	});
+		// 	lines_vertices.emplace_back(PosColVertex{
+		// 		.Position{.x = 1.0f, .y = y, .z = 0.5f},
+		// 		.Color{.r = 0xff, .g = 0xff, .b = 0x00, .a = 0xff},
+		// 	});
+		// }
+
+		// // vertical lines at z = 0.0f (near) through 1.0f (far):
+		// for (uint32_t i = 0; i < 30; i++) {
+		// 	float x = (i + 0.5f) / 30.0f * 2.0f - 1.0f;
+		// 	float z = (i + 0.5f) / 30.0f;
+		// 	lines_vertices.emplace_back(PosColVertex{
+		// 		.Position{.x = x, .y = -1.0f, .z = z},
+		// 		.Color{.r = 0x44, .g = 0x00, .b = 0xff, .a = 0xff},
+		// 	});
+		// 	lines_vertices.emplace_back(PosColVertex{
+		// 		.Position{.x = x, .y = 1.0f, .z = z},
+		// 		.Color{.r = 0x44, .g = 0x00, .b = 0xff, .a = 0xff},
+		// 	});
+		// }
+		// assert(lines_vertices.size() == count);
+	}
+
+	{	// cube
 		lines_vertices.clear();
-		constexpr size_t count = 2 * 30 + 2 * 30;
+		const uint32_t lines_per_axis = 3;
+		constexpr size_t count = (int)lines_per_axis * 2 * 6 + 12;
+		float cube_edge_length = .5f;
 		lines_vertices.reserve(count);
 		
-		// horizontal lines at z = 0,5f;
-		for (uint32_t i = 0; i < 30; i++) {
-			float y = (i + 0.5f) / 30.0f * 2.0f - 1.0f;
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = -1.0f, .y = y, .z = 0.5f},
-				.Color{.r = 0xff, .g = 0xff, .b = 0x00, .a = 0xff},
-			});
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = 1.0f, .y = y, .z = 0.5f},
-				.Color{.r = 0xff, .g = 0xff, .b = 0x00, .a = 0xff},
-			});
-		}
+		// the center of the cube is at (0, 0, .5), 3 axes are bounded by [-1, 1], [-1, 1], [0, 1]
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f
+			},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// a
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f
+			},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// b
 
-		// vertical lines at z = 0.0f (near) through 1.0f (far):
-		for (uint32_t i = 0; i < 30; i++) {
-			float x = (i + 0.5f) / 30.0f * 2.0f - 1.0f;
-			float z = (i + 0.5f) / 30.0f;
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = -1.0f, .z = z},
-				.Color{.r = 0x44, .g = 0x00, .b = 0xff, .a = 0xff},
-			});
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = 1.0f, .z = z},
-				.Color{.r = 0x44, .g = 0x00, .b = 0xff, .a = 0xff},
-			});
-		}
-		assert(lines_vertices.size() == count);
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// a
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// c
+
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// c
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// d
+
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// b
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// d
+
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// a
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// e
+
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// e
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// g
+
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// g
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// c
+
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// g
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// h
+
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// h
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// d
+
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// e
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// f
+
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// b
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// f
+		
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// f
+		lines_vertices.emplace_back(PosColVertex{
+			.Position{
+				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+		});	// h
 	}
 }
 
