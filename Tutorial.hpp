@@ -1,6 +1,8 @@
 #pragma once
 
 #include "PosColVertex.hpp"
+#include "PosNorTexVertex.hpp"
+
 #include "mat4.hpp"
 
 #include "RTG.hpp"
@@ -42,6 +44,10 @@ struct Tutorial : RTG::Application {
 		Helpers::AllocatedBuffer Camera;		// device-local
 		VkDescriptorSet Camera_descriptors;		// references Camera
 		
+		// location for ObjectsPipeline::Transforms data: (streamed to GPU per-frame)
+		Helpers::AllocatedBuffer Transforms_src;	// host coherent; mapped
+		Helpers::AllocatedBuffer Transforms;	// device-local
+		VkDescriptorSet Transforms_descriptors;	// references Transforms
 	};
 	std::vector< Workspace > workspaces;
 
@@ -90,8 +96,49 @@ struct Tutorial : RTG::Application {
 		void destroy(RTG &);
 	} lines_pipeline;
 
+	struct ObjectsPipeline {
+		// descriptor set layouts:
+		// VkDescriptorSetLayout set0_Camera = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set2_Texture = VK_NULL_HANDLE;
+
+		// types for descriptors:
+		struct Transform  {
+			mat4 CLIP_FROM_LOCAL;
+			mat4 WORLD_FROM_LOCAL;
+			mat4 WORLD_FROM_LOCAL_NORMAL;
+		};
+		static_assert(sizeof(Transform) == 16*4 + 16 * 4 + 16 * 4, "Transform is the expected size.");
+
+		// no push constants
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+
+		// vertex bindings
+		using Vertex = PosNorTexVertex;
+
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
+		void destroy(RTG &);
+	} objects_pipeline;
+
 	//-------------------------------------------------------------------
 	//static scene resources:
+
+	Helpers::AllocatedBuffer object_vertices;	// stores vertex data for all meshes
+	struct ObjectVertices {
+		uint32_t first = 0;	// index of the first vertex
+		uint32_t count = 0;	// count of vertices
+	};	
+	ObjectVertices plane_vertices;
+	ObjectVertices torus_vertices;
+
+	std::vector<Helpers::AllocatedImage> textures;	// handles to the actual image data
+	std::vector<VkImageView> texture_views;	// references to portions of the texture
+	VkSampler texture_sampler = VK_NULL_HANDLE;	// gives the sampler state (wrapping, interpolation, etc) for reading from the textures
+	VkDescriptorPool texture_descriptor_pool = VK_NULL_HANDLE;	// the pool from which we allocate texture descriptor sets
+	std::vector<VkDescriptorSet> texture_descriptors;	// allocated from texture_descriptor_pool
 
 	//--------------------------------------------------------------------
 	//Resources that change when the swapchain is resized:
@@ -115,6 +162,13 @@ struct Tutorial : RTG::Application {
 	mat4 CLIP_FROM_WORLD;
 
 	std::vector<LinesPipeline::Vertex> lines_vertices;
+
+	struct ObjectInstance {
+		ObjectVertices vertices;
+		ObjectsPipeline::Transform transform;
+		uint32_t texture = 0;	// an index that indicates which texture descriptor to bind when drawing each instance
+	};
+	std::vector<ObjectInstance> object_instances;
 
 	//--------------------------------------------------------------------
 	//Rendering function, uses all the resources above to queue work to draw a frame:

@@ -29,6 +29,7 @@ custom_flags_and_rules();
 const main_objs = [
 	maek.CPP('Tutorial.cpp'),
 	maek.CPP('PosColVertex.cpp'),
+	maek.CPP('PosNorTexVertex.cpp'),
 	maek.CPP('RTG.cpp'),
 	maek.CPP('Helpers.cpp'),
 	maek.CPP('main.cpp'),
@@ -52,11 +53,11 @@ const lines_shaders = [
 main_objs.push( maek.CPP('Tutorial-LinesPipeline.cpp', undefined, { depends:[...lines_shaders] } ) );
 
 //uncomment to build objects shaders and pipeline:
-//const objects_shaders = [
-//	maek.GLSLC('objects.vert'),
-//	maek.GLSLC('objects.frag'),
-//];
-//main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
+const objects_shaders = [
+	maek.GLSLC('objects.vert'),
+	maek.GLSLC('objects.frag'),
+];
+main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
 
 const prebuilt_objs = [ ];
 
