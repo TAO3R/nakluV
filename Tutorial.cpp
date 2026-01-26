@@ -26,7 +26,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		std::array<VkDescriptorPoolSize, 2> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = 1 * per_workspace,	// one descriptor per set, one set per workspace
+				.descriptorCount = 2 * per_workspace,	// one descriptor per set, two set per workspace
 			},
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -37,7 +37,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,	// because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors alocated from this pool
-			.maxSets = 2 * per_workspace,	// two sets per workspace
+			.maxSets = 3 * per_workspace,	// three sets per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -74,6 +74,31 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			VK(vkAllocateDescriptorSets(rtg.device,	 &alloc_info, &workspace.Camera_descriptors));
 		}
 
+		workspace.World_src = rtg.helpers.create_buffer(
+			sizeof(ObjectsPipeline::World),
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			Helpers::Mapped
+		);
+		workspace.World = rtg.helpers.create_buffer(
+			sizeof(ObjectsPipeline::World),
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		);
+
+		{ // allocate descriptor set for World descriptor
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set0_World,
+			};
+
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.World_descriptors) );
+			// NOTE: will actually fill in this descriptor set just a bit lower
+		}
+
 		{	// allocate descriptor set for Transforms descriptor
 			VkDescriptorSetAllocateInfo alloc_info{
 				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -94,7 +119,13 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 				.range = workspace.Camera.size,
 			};
 
-			std::array<VkWriteDescriptorSet, 1> writes {
+			VkDescriptorBufferInfo World_info{
+				.buffer = workspace.World.handle,
+				.offset = 0,
+				.range = workspace.World.size,
+			};
+
+			std::array<VkWriteDescriptorSet, 2> writes {
 				VkWriteDescriptorSet {
 					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 					.dstSet = workspace.Camera_descriptors,
@@ -103,6 +134,15 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 					.descriptorCount = 1,
 					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 					.pBufferInfo = &Camera_info,
+				},
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.World_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+					.pBufferInfo = &World_info,
 				},
 			};
 
@@ -114,7 +154,8 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 				nullptr						// pDescriptorCopies
 			);
 		}
-	}
+	}	// end of the for-loop for per-workspace descriptor set allocation
+
 	{	// create object vertices
 		std::vector<PosNorTexVertex> vertices;
 
@@ -459,6 +500,14 @@ Tutorial::~Tutorial() {
 			rtg.helpers.destroy_buffer(std::move(workspace.Camera));
 		}
 
+		// World_descriptors freed when pool is destroyed.
+		if (workspace.World_src.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.World_src));
+		}
+		if (workspace.World.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.World));
+		}
+		
 		// Transforms_descriptors freed when pool is destroyed
 		if (workspace.Transforms_src.handle != VK_NULL_HANDLE) {
 			rtg.helpers.destroy_buffer(std::move(workspace.Transforms_src));
@@ -586,6 +635,22 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			.size = workspace.Camera_src.size,
 		};
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Camera_src.handle, workspace.Camera.handle, 1, &copy_region);
+	}
+
+	{	// upload world info:
+		assert(workspace.Camera_src.size == sizeof(world));
+
+		// host-side copy into World_src:
+		memcpy(workspace.World_src.allocation.data(), &world, sizeof(world));
+
+		// add device-side copy from World_src -> World:
+		assert(workspace.World_src.size == workspace.World.size);
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = workspace.World_src.size,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.World_src.handle, workspace.World.handle, 1, &copy_region);
 	}
 
 	// resize Object Transforms buffers if needed
@@ -771,15 +836,16 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 			}
 
-			{ // bind Transforms descriptor set:
-				std::array< VkDescriptorSet, 1 > descriptor_sets{
+			{ // bind World and Transforms descriptor set:
+				std::array< VkDescriptorSet, 2 > descriptor_sets{
+					workspace.World_descriptors,	// 0: World
 					workspace.Transforms_descriptors, // 1: Transforms
 				};
 				vkCmdBindDescriptorSets(
 					workspace.command_buffer,	// command buffer
 					VK_PIPELINE_BIND_POINT_GRAPHICS,	// pipeline bind point
 					objects_pipeline.layout,	// pipeline layout
-					1,	// first set
+					0,	// first set
 					uint32_t(descriptor_sets.size()), descriptor_sets.data(),	// descriptor sets count, ptr
 					0, nullptr	// dynamic offsets count, ptr
 				);
@@ -846,6 +912,69 @@ void Tutorial::update(float dt) {
 			0.0f, 0.0f, 0.5f, 	// target
 			0.0f, 0.0f, 1.0f	// up
 		);
+	}
+
+	{	// static sun and sky:
+		// world.SKY_DIRECTION.x = 0.0f;
+		// world.SKY_DIRECTION.y = 0.0f;
+		// world.SKY_DIRECTION.z = 1.0f;
+
+		// world.SKY_ENERGY.r = 0.1f;
+		// world.SKY_ENERGY.g = 0.1f;
+		// world.SKY_ENERGY.b = 0.2f;
+
+		// world.SUN_DIRECTION.x = 6.0f / 23.0f;
+		// world.SUN_DIRECTION.y = 13.0f / 23.0f;
+		// world.SUN_DIRECTION.z = 18.0f / 23.0f;
+
+		// world.SUN_ENERGY.r = 1.0f;
+		// world.SUN_ENERGY.g = 1.0f;
+		// world.SUN_ENERGY.b = 0.9f;
+	}
+
+	{	// day/night cycle sun and sky:
+		// 1. Define cycle parameters
+		const float dayDuration = 6.0f; // Full day/night cycle in seconds
+		float sunAngle = (time / dayDuration) * 2.0f * 3.14159f;
+
+		// 2. Calculate Sun Direction (Rotating around the X or Y axis)
+		// Here we rotate in the YZ plane to simulate the sun rising and setting
+		world.SUN_DIRECTION.x = 0.0f;
+		world.SUN_DIRECTION.y = sin(sunAngle); 
+		world.SUN_DIRECTION.z = cos(sunAngle); // Height in the sky
+
+		// 3. Calculate Sun Intensity/Color based on height (z-component)
+		float sunHeight = world.SUN_DIRECTION.z;
+		
+		if (sunHeight > 0.0f) {
+			// Daytime: Sun is above the horizon
+			// Use smoothstep or clamp to transition colors during sunrise/sunset
+			float intensity = sunHeight > 0.0f ? sunHeight : 0.0f;
+			
+			world.SUN_ENERGY.r = 1.0f;
+			world.SUN_ENERGY.g = 0.8f + (0.2f * intensity); // Whiter at noon, yellower at sunset
+			world.SUN_ENERGY.b = 0.5f + (0.4f * intensity);
+			
+			// Sky gets brighter during the day
+			world.SKY_ENERGY.r = 0.1f * intensity;
+			world.SKY_ENERGY.g = 0.2f * intensity;
+			world.SKY_ENERGY.b = 0.5f * intensity;
+		} else {
+			// Nighttime: Sun is below the horizon
+			world.SUN_ENERGY.r = 0.0f;
+			world.SUN_ENERGY.g = 0.0f;
+			world.SUN_ENERGY.b = 0.0f;
+
+			// Dim ambient moon/star light for the sky
+			world.SKY_ENERGY.r = 0.01f;
+			world.SKY_ENERGY.g = 0.01f;
+			world.SKY_ENERGY.b = 0.03f;
+		}
+
+		// Sky direction stays constant (up) or can subtly shift
+		world.SKY_DIRECTION.x = 0.0f;
+		world.SKY_DIRECTION.y = 0.0f;
+		world.SKY_DIRECTION.z = 1.0f;
 	}
 
 	{	// draw a cube with LinesPipeline
