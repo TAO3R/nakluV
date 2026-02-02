@@ -8,12 +8,15 @@
 #include <vulkan/vulkan_metal.h> //for VK_EXT_METAL_SURFACE_EXTENSION_NAME
 #endif
 #include <vulkan/vk_enum_string_helper.h> //useful for debug output
+#include <vulkan/utility/vk_format_utils.h> //for getting format sizes
 #include <GLFW/glfw3.h>
 
 #include <cassert>
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <sstream>
+#include <fstream>
 #include <set>
 
 void RTG::Configuration::parse(int argc, char **argv) {
@@ -41,6 +44,8 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			};
 			surface_extent.width = conv("width");
 			surface_extent.height = conv("height");
+		} else if (arg == "--headless") {
+			headless = true;
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}
@@ -51,6 +56,7 @@ void RTG::Configuration::usage(std::function< void(const char *, const char *) >
 	callback("--debug, --no-debug", "Turn on/off debug and validation layers.");
 	callback("--physical-device <name>", "Run on the named physical device (guesses, otherwise).");
 	callback("--drawing-size <w> <h>", "Set the size of the surface to draw to.");
+	callback("--headless", "Don't create a window; read events from stdin.");
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
@@ -79,7 +85,6 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 	configuration = configuration_;
 
 	//fill in flags/extensions/layers information:
-
 	{	//create the `instance` (main handle to Vulkan library):
 		VkInstanceCreateFlags instance_flags = 0;
 		std::vector< const char * > instance_extensions;
@@ -100,7 +105,8 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 			instance_layers.emplace_back("VK_LAYER_KHRONOS_validation");
 		}
 
-		{	// add extensions needed by glfw
+		if (!configuration.headless)
+		{	// add extensions needed by glfw:
 			glfwInit();
 			if (!glfwVulkanSupported()) {
 				throw std::runtime_error("GLFW reports Vulkan is not supported.");
@@ -154,6 +160,7 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 		}
 	}
 
+	if (!configuration.headless)
 	{	// create the `window` and `surface` (where things get drawn):
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
@@ -230,7 +237,30 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 		}
 	}
 
-	{	// select the `surface_format` and `present_mode` which control how colors are represented on the surface and how new images are supplied to the surface:
+	// select the `surface_format` and `present_mode` which control how colors are represented on the surface and how new images are supplied to the surface:
+	if (configuration.headless)
+	{
+		//in headless mode, just use the first requested format:
+		if (configuration.surface_formats.empty()) {
+			throw std::runtime_error("No surface formats requested.");
+		}
+		surface_format = configuration.surface_formats[0];
+
+		//headless mode will always use VK_PRESENT_MODE_FIFO_KHR, so make sure that's an option:
+		bool have_fifo = false;
+		for (auto const &mode : configuration.present_modes) {
+			if (mode == VK_PRESENT_MODE_FIFO_KHR) {
+				have_fifo = true;
+				break;
+			}
+		}
+		if (!have_fifo) {
+			throw std::runtime_error("Configured present modes do not contain VK_PRESENT_MODE_FIFO_KHR.");
+		}
+		present_mode = VK_PRESENT_MODE_FIFO_KHR;
+
+		present_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	} else {	
 		std::vector< VkSurfaceFormatKHR > formats;
 		std::vector< VkPresentModeKHR > present_modes;
 		
@@ -299,12 +329,20 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 					if (!graphics_queue_family) graphics_queue_family = i;
 				}
 
-				//if it has present support, set the present queue family:
-				VkBool32 present_support = VK_FALSE;
-				VK( vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, i, surface, &present_support) );
-				if (present_support == VK_TRUE) {
-					if (!present_queue_family) present_queue_family = i;
+				if (!configuration.headless)
+				{
+					//if it has present support, set the present queue family:
+					VkBool32 present_support = VK_FALSE;
+					VK( vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, i, surface, &present_support) );
+					if (present_support == VK_TRUE) {
+						if (!present_queue_family) present_queue_family = i;
+					}
 				}
+			}
+
+			//in headless mode, "present" (copy-to-host) on the graphics queue:
+			if (configuration.headless) {
+				present_queue_family = graphics_queue_family;
 			}
 
 			if (!graphics_queue_family) {
@@ -321,8 +359,11 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 		#if defined(__APPLE__)
 		device_extensions.emplace_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
 		#endif
-		//Add the swapchain extension:
-		device_extensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
+		if (!configuration.headless) {
+			// add the swapchain extension:
+			device_extensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+		}
 
 		{ //create the logical device:
 			std::vector< VkDeviceQueueCreateInfo > queue_create_infos;
@@ -456,57 +497,169 @@ void RTG::recreate_swapchain() {
 		destroy_swapchain();
 	}
 
-	// determine size, image count, and transform for swapchain:
-	VkSurfaceCapabilitiesKHR capabilities;
-	VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities));
+	if (configuration.headless) {
+		assert(surface == VK_NULL_HANDLE); //headless, so must not have a surface
 
-	swapchain_extent = capabilities.currentExtent;	// current size of the surface
+		//make a fake swapchain:
 
-	uint32_t requested_count = capabilities.minImageCount + 1;	// allow some amount of parallelism in rendering
-	if (capabilities.maxImageCount != 0) {
-		requested_count = std::min(capabilities.maxImageCount, requested_count);
-	}
+		// set extent from configuration:
+		swapchain_extent = configuration.surface_extent;
 
-	{	// create swapchain:
-		VkSwapchainCreateInfoKHR create_info {
-			.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-			.surface = surface,
-			.minImageCount = requested_count,
-			.imageFormat = surface_format.format,
-			.imageColorSpace = surface_format.colorSpace,
-			.imageExtent = swapchain_extent,
-			.imageArrayLayers = 1,
-			.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			.preTransform = capabilities.currentTransform,
-			.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-			.presentMode = present_mode,
-			.clipped = VK_TRUE,
-			.oldSwapchain = VK_NULL_HANDLE	// NOTE: could be more efficient by passing old swapchain handle here instead of destroying it
-		};
-		
-		std::vector<uint32_t> queue_family_indices {
-			graphics_queue_family.value(),
-			present_queue_family.value()
-		};
+		// set number of images to 3:
+		uint32_t requested_count = 3; //enough for FIFO-style presentation
 
-		if (queue_family_indices[0] != queue_family_indices[1]) {
-			// if images will be presented on a different queue from the one graphics commands run on, make sure they are shared:
-			create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-			create_info.queueFamilyIndexCount = uint32_t(queue_family_indices.size());
-			create_info.pQueueFamilyIndices = queue_family_indices.data();
-		}
-		else {
-			create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		{	// create command pool for the headless image copy command buffers:
+			assert(headless_command_pool == VK_NULL_HANDLE);
+			VkCommandPoolCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+				.flags = 0,
+				.queueFamilyIndex = graphics_queue_family.value(),
+			};
+			VK( vkCreateCommandPool(device, &create_info, nullptr, &headless_command_pool) );
 		}
 
-		VK(vkCreateSwapchainKHR(device, &create_info, nullptr, &swapchain));
-	}
+		// create headless_swapchain
+		assert(headless_swapchain.empty());
 
-	{	// get the swapchain images:
-		uint32_t count = 0;
-		VK(vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr));	// getting the array size
-		swapchain_images.resize(count);
-		VK(vkGetSwapchainImagesKHR(device, swapchain, &count, swapchain_images.data()));	// actual fetch
+		headless_swapchain.reserve(requested_count);
+		for (uint32_t i = 0; i < requested_count; ++i) {
+			//add a headless "swapchain" image:
+			HeadlessSwapchainImage &h = headless_swapchain.emplace_back();
+
+			// allocate image data: (on-GPU, will be rendered to)
+			h.image = helpers.create_image(
+				swapchain_extent,
+				surface_format.format,
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+			);
+
+			// allocate buffer data: (on-CPU, will be copied to)
+			h.buffer = helpers.create_buffer(
+				swapchain_extent.width * swapchain_extent.height * vkuFormatTexelBlockSize(surface_format.format) / vkuFormatTexelsPerBlock(surface_format.format),
+				VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				Helpers::Mapped
+			);
+
+			{	// create and record copy command
+				VkCommandBufferAllocateInfo alloc_info{
+					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+					.commandPool = headless_command_pool,
+					.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+					.commandBufferCount = 1,
+				};
+				VK( vkAllocateCommandBuffers(device, &alloc_info, &h.copy_command) );
+
+				//record:
+				VkCommandBufferBeginInfo begin_info{
+					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+					.flags = 0,
+				};
+				VK( vkBeginCommandBuffer(h.copy_command, &begin_info) );
+
+				VkBufferImageCopy region{
+					.bufferOffset = 0,
+					.bufferRowLength = swapchain_extent.width,
+					.bufferImageHeight = swapchain_extent.height,
+					.imageSubresource{
+						.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+						.mipLevel = 0,
+						.baseArrayLayer = 0,
+						.layerCount = 1,
+					},
+					.imageOffset{ .x = 0, .y = 0, .z = 0 },
+					.imageExtent{
+						.width = swapchain_extent.width,
+						.height = swapchain_extent.height,
+						.depth = 1
+					},
+				};
+				vkCmdCopyImageToBuffer(
+					h.copy_command,
+					h.image.handle,
+					VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					h.buffer.handle,
+					1, &region
+				);
+				
+				VK( vkEndCommandBuffer(h.copy_command) );
+			}
+
+			{ //create fence to signal when image is done being "presented" (copied to host memory):
+				VkFenceCreateInfo create_info{
+					.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+					.flags = VK_FENCE_CREATE_SIGNALED_BIT, //start signaled, because all images are available to start with
+				};
+				VK( vkCreateFence(device, &create_info, nullptr, &h.image_presented) );
+			}
+		}
+
+		//copy image references into swapchain_images:
+		assert(swapchain_images.empty());
+		swapchain_images.assign(requested_count, VK_NULL_HANDLE);
+		for (uint32_t i = 0; i < requested_count; ++i) {
+			swapchain_images[i] = headless_swapchain[i].image.handle;
+		}
+
+	} else {
+		assert(surface != VK_NULL_HANDLE); //not headless, so must have a surface
+
+		//request a swapchain from the windowing system:
+
+		// determine size, image count, and transform for swapchain:
+		VkSurfaceCapabilitiesKHR capabilities;
+		VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities));
+
+		swapchain_extent = capabilities.currentExtent;	// current size of the surface
+
+		uint32_t requested_count = capabilities.minImageCount + 1;	// allow some amount of parallelism in rendering
+		if (capabilities.maxImageCount != 0) {
+			requested_count = std::min(capabilities.maxImageCount, requested_count);
+		}
+
+		{	// create swapchain:
+			VkSwapchainCreateInfoKHR create_info {
+				.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+				.surface = surface,
+				.minImageCount = requested_count,
+				.imageFormat = surface_format.format,
+				.imageColorSpace = surface_format.colorSpace,
+				.imageExtent = swapchain_extent,
+				.imageArrayLayers = 1,
+				.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+				.preTransform = capabilities.currentTransform,
+				.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+				.presentMode = present_mode,
+				.clipped = VK_TRUE,
+				.oldSwapchain = VK_NULL_HANDLE	// NOTE: could be more efficient by passing old swapchain handle here instead of destroying it
+			};
+			
+			std::vector<uint32_t> queue_family_indices {
+				graphics_queue_family.value(),
+				present_queue_family.value()
+			};
+
+			if (queue_family_indices[0] != queue_family_indices[1]) {
+				// if images will be presented on a different queue from the one graphics commands run on, make sure they are shared:
+				create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+				create_info.queueFamilyIndexCount = uint32_t(queue_family_indices.size());
+				create_info.pQueueFamilyIndices = queue_family_indices.data();
+			}
+			else {
+				create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			}
+
+			VK(vkCreateSwapchainKHR(device, &create_info, nullptr, &swapchain));
+		}
+
+		{	// get the swapchain images:
+			uint32_t count = 0;
+			VK(vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr));	// getting the array size
+			swapchain_images.resize(count);
+			VK(vkGetSwapchainImagesKHR(device, swapchain, &count, swapchain_images.data()));	// actual fetch
+		}
 	}
 
 	// create views for swapchain images:
@@ -572,10 +725,26 @@ void RTG::destroy_swapchain() {
 	// forget handles to swapchain images (will destroy by deallocating the swapchain itself):
 	swapchain_images.clear();
 
-	// deallocate the swapchain and (thus) its images:
-	if (swapchain != VK_NULL_HANDLE) {
-		vkDestroySwapchainKHR(device, swapchain, nullptr);
-		swapchain = VK_NULL_HANDLE;
+	if (configuration.headless) {
+		// destroy headless_swapchain images
+		for (auto &h : headless_swapchain) {
+			helpers.destroy_image(std::move(h.image));
+			helpers.destroy_buffer(std::move(h.buffer));
+			h.copy_command = VK_NULL_HANDLE; //pool deallocated below
+			vkDestroyFence(device, h.image_presented, nullptr);
+			h.image_presented = VK_NULL_HANDLE;
+		}
+		headless_swapchain.clear();
+
+		//free all of the copy command buffers by destroying the pool from which they were allocated:
+		vkDestroyCommandPool(device, headless_command_pool, nullptr);
+		headless_command_pool = VK_NULL_HANDLE;
+	} else{
+		// deallocate the swapchain and (thus) its images:
+		if (swapchain != VK_NULL_HANDLE) {
+			vkDestroySwapchainKHR(device, swapchain, nullptr);
+			swapchain = VK_NULL_HANDLE;
+		}
 	}
 }
 
@@ -682,20 +851,70 @@ void RTG::run(Application &application) {
 
 	// setup event handling:
 	std::vector< InputEvent > event_queue;
-	glfwSetWindowUserPointer(window, &event_queue);
+	if (!configuration.headless) {
+		glfwSetWindowUserPointer(window, &event_queue);
 
-	glfwSetCursorPosCallback(window, cursor_pos_callback);
-	glfwSetMouseButtonCallback(window, mouse_button_callback);
-	glfwSetScrollCallback(window, scroll_callback);
-	glfwSetKeyCallback(window, key_callback);
+		glfwSetCursorPosCallback(window, cursor_pos_callback);
+		glfwSetMouseButtonCallback(window, mouse_button_callback);
+		glfwSetScrollCallback(window, scroll_callback);
+		glfwSetKeyCallback(window, key_callback);
+	}
+
+	uint32_t headless_next_image = 0;
 
 	// setup time handling:
 	std::chrono::high_resolution_clock::time_point before = std::chrono::high_resolution_clock::now();
 
-	while (!glfwWindowShouldClose(window)) {
+	while (configuration.headless || !glfwWindowShouldClose(window)) {
+		float headless_dt = 0.0f;
+		std::string headless_save = "";
+		
 		// event handling:
-		glfwPollEvents();
+		if (configuration.headless) {
+			// read events from stdin
+			std::string line;
+			while (std::getline(std::cin, line)) {
+				// parse event from line
+				try {
+					std::istringstream iss(line);
+					iss.imbue(std::locale::classic()); //ensure floating point numbers always parse with '.' as the separator
 
+					// read type
+					std::string type;
+					if (!(iss >> type)) throw std::runtime_error("failed to read event type");
+
+					//TODO: type-specific parsing
+					if (type == "AVAILABLE") {  //AVAILABLE dt [save.ppm]
+						// read dt
+						if (!(iss >> headless_dt)) throw std::runtime_error("failed to read dt");
+						if (headless_dt < 0.0f) throw std::runtime_error("dt less than zero");
+
+						// check for save file name
+						if (iss >> headless_save) {
+							if (!headless_save.ends_with(".ppm")) throw std::runtime_error("output filename ("" + headless_save + "") must end with .ppm");
+						}
+
+						// check for trailing junk
+						char junk;
+						if (iss >> junk) throw std::runtime_error("trailing junk in event line");
+
+						// stop parsing events so a frame can draw
+						break;
+
+					} else {
+						throw std::runtime_error("unrecognized type");
+					}
+
+				} catch (std::exception &e) {
+					std::cerr << "WARNING: failed to parse event (" << e.what() << ") from: "" << line << ""; ignoring it." << std::endl;
+				}
+			}
+			//if we've run out of events, stop running the main loop:
+			if (!std::cin) break;
+		} else {
+			glfwPollEvents();
+		}
+		
 		//deliver all input events to application:
 		for (InputEvent const &input : event_queue) {
 			application.on_input(input);
@@ -708,6 +927,9 @@ void RTG::run(Application &application) {
 			before = after;
 
 			dt = std::min(dt, 0.1f); //lag if frame rate dips too low
+
+			//in headless mode, override dt:
+			if (configuration.headless) dt = headless_dt;
 
 			application.update(dt);
 		}
@@ -727,26 +949,59 @@ void RTG::run(Application &application) {
 			}
 
 			uint32_t image_index = -1U;
-			// acquire an image (resize swapchain if needed)
-			retry:
-			// ask the swapchain for the next image index -- note careful return handling:
-			if (VkResult result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, workspaces[workspace_index].image_available, VK_NULL_HANDLE, &image_index);
-				result == VK_ERROR_OUT_OF_DATE_KHR) {
-				// if the swapchain is out-of-date, recreate it and run the loop again:
-				std::cerr << "Recreating swapchain because vkAcquireNextImageKHR returned " << string_VkResult(result) << "." << std::endl;
-				
-				recreate_swapchain();
-				on_swapchain();
+			if (configuration.headless) {
+				assert(swapchain == VK_NULL_HANDLE);
 
-				goto retry;
-			}
-			else if (result == VK_SUBOPTIMAL_KHR) {
-				// if the swapchain is suboptimal, render to it and recreate it later:
-				std::cerr << "Suboptimal swapchain format -- ignoring for the moment." << std::endl;
-			}
-			else if (result != VK_SUCCESS) {
-				// other non-success results are genuine errors:
-				throw std::runtime_error("Failed to acquire swapchain image (" + std::string(string_VkResult(result)) + ")!");
+				//acquire the least-recently-used headless swapchain image:
+				assert(headless_next_image < uint32_t(headless_swapchain.size()));
+				image_index = headless_next_image;
+				headless_next_image = (headless_next_image + 1) % uint32_t(headless_swapchain.size());
+
+				// wait for image to be done copying to buffer
+				VK( vkWaitForFences(device, 1, &headless_swapchain[image_index].image_presented, VK_TRUE, UINT64_MAX) );
+
+				// save buffer, if needed
+				if (headless_swapchain[image_index].save_to != "") {
+					headless_swapchain[image_index].save();
+					headless_swapchain[image_index].save_to = "";
+				}
+
+				//remember if next frame should be saved:
+				headless_swapchain[image_index].save_to = headless_save;
+
+				// mark next copy as pending
+				VK( vkResetFences(device, 1, &headless_swapchain[image_index].image_presented) );
+
+				// signal GPU that image is "available for rendering to"
+				VkSubmitInfo submit_info{
+					.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+					.signalSemaphoreCount = 1,
+					.pSignalSemaphores = &workspaces[workspace_index].image_available
+				};
+				VK( vkQueueSubmit(graphics_queue, 1, &submit_info, nullptr) );
+
+			} else {
+				// acquire an image (resize swapchain if needed)
+				retry:
+				// ask the swapchain for the next image index -- note careful return handling:
+				if (VkResult result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, workspaces[workspace_index].image_available, VK_NULL_HANDLE, &image_index);
+					result == VK_ERROR_OUT_OF_DATE_KHR) {
+					// if the swapchain is out-of-date, recreate it and run the loop again:
+					std::cerr << "Recreating swapchain because vkAcquireNextImageKHR returned " << string_VkResult(result) << "." << std::endl;
+					
+					recreate_swapchain();
+					on_swapchain();
+
+					goto retry;
+				}
+				else if (result == VK_SUBOPTIMAL_KHR) {
+					// if the swapchain is suboptimal, render to it and recreate it later:
+					std::cerr << "Suboptimal swapchain format -- ignoring for the moment." << std::endl;
+				}
+				else if (result != VK_SUCCESS) {
+					// other non-success results are genuine errors:
+					throw std::runtime_error("Failed to acquire swapchain image (" + std::string(string_VkResult(result)) + ")!");
+				}
 			}
 
 			// queue the rendering work - call render function:
@@ -758,7 +1013,24 @@ void RTG::run(Application &application) {
 				.workspace_available = workspaces[workspace_index].workspace_available,
 			});
 
-			{	// present image (resize swapchain if needed) - queue the work for presentation
+			//queue the work for presentation:
+			if (configuration.headless) {
+				//in headless mode, submit the copy command we recorded previously:
+
+				//will wait in the transfer stage for image_done to be signaled:
+				VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+				VkSubmitInfo submit_info{
+					.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+					.waitSemaphoreCount = 1,
+					.pWaitSemaphores = &swapchain_image_dones[image_index],
+					.pWaitDstStageMask = &wait_stage,
+					.commandBufferCount = 1,
+					.pCommandBuffers = &headless_swapchain[image_index].copy_command,
+				};
+
+				VK( vkQueueSubmit(graphics_queue, 1, &submit_info, headless_swapchain[image_index].image_presented) );
+
+			} else {	// present image (resize swapchain if needed)
 				VkPresentInfoKHR present_info{
 					.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 					.waitSemaphoreCount = 1,
@@ -785,13 +1057,61 @@ void RTG::run(Application &application) {
 		}	// end of rendering handling
 
 	}	// end of while-loop
+	
+	//wait for any in-flight "headless" frames marked for saving to finish:
+	if (configuration.headless) {
+		for (size_t i = 0; i < headless_swapchain.size(); ++i) {
+			uint32_t image_index = headless_next_image;
+			headless_next_image = (headless_next_image + 1) % uint32_t(headless_swapchain.size());
+
+			//block until the image is finished being "presented" (copied-to-host):
+			VK( vkWaitForFences(device, 1, &headless_swapchain[image_index].image_presented, VK_TRUE, UINT64_MAX) );
+
+			//save if requested:
+			if (headless_swapchain[image_index].save_to != "") {
+				headless_swapchain[image_index].save();
+				headless_swapchain[image_index].save_to = "";
+			}
+		}
+	}
 
 	// tear down event handling
-	glfwSetMouseButtonCallback(window, nullptr);
-	glfwSetCursorPosCallback(window, nullptr);
-	glfwSetScrollCallback(window, nullptr);
-	glfwSetKeyCallback(window, nullptr);
+	if (!configuration.headless)
+	{
+		glfwSetMouseButtonCallback(window, nullptr);
+		glfwSetCursorPosCallback(window, nullptr);
+		glfwSetScrollCallback(window, nullptr);
+		glfwSetKeyCallback(window, nullptr);
 
-	glfwSetWindowUserPointer(window, nullptr);
+		glfwSetWindowUserPointer(window, nullptr);
+	}
 
 }	// end of RTG::run
+
+void RTG::HeadlessSwapchainImage::save() const {
+	if (save_to == "") return;
+
+	if (image.format == VK_FORMAT_B8G8R8A8_SRGB) {
+		//get a pointer to the image data copied to the buffer:
+		char const *bgra = reinterpret_cast< char const * >(buffer.allocation.data());
+
+		// convert bgra -> rgb data
+		std::vector< char > rgb(image.extent.height * image.extent.width * 3);
+		for (uint32_t y = 0; y < image.extent.height; ++y) {
+			for (uint32_t x = 0; x < image.extent.width; ++x) {
+				rgb[(y * image.extent.width + x) * 3 + 0] = bgra[(y * image.extent.width + x) * 4 + 2];
+				rgb[(y * image.extent.width + x) * 3 + 1] = bgra[(y * image.extent.width + x) * 4 + 1];
+				rgb[(y * image.extent.width + x) * 3 + 2] = bgra[(y * image.extent.width + x) * 4 + 0];
+			}
+		}
+
+		// write ppm file
+		std::ofstream ppm(save_to, std::ios::binary);
+		ppm << "P6\n"; //magic number + newline
+		ppm << image.extent.width << " " << image.extent.height << "\n"; //image size + newline
+		ppm << "255\n"; //max color value + newline
+		ppm.write(rgb.data(), rgb.size()); //rgb data in row-major order, starting from the top left
+	} else {
+		std::cerr << "WARNING: saving format " << string_VkFormat(image.format) << " not supported." << std::endl;
+	}
+}
