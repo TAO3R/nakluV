@@ -312,6 +312,8 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 			}
 			throw std::runtime_error("No present mode matching requested mode(s) found.");
 		}();
+
+		present_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	}
 
 	{	// create the `device` (logical interface to the GPU) and the `queue`s to which we can submit commands:

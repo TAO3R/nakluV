@@ -1010,6 +1010,20 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				std::array<VkDeviceSize, 1 > offsets{0};
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 			}
+			
+			{	// bind Camera descriptor set:
+				std::array<VkDescriptorSet, 1> descriptor_sets{
+					workspace.Camera_descriptors,	// 0: Camera
+				};
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,	// command buffer
+					VK_PIPELINE_BIND_POINT_GRAPHICS,	// pipeline bind point
+					lines_pipeline.layout,	// pipeline layout
+					0,	// first set
+					uint32_t(descriptor_sets.size()), descriptor_sets.data(),	// descriptor sets count, ptr
+					0, nullptr	// dynamic offsets count, ptr
+				);
+			}
 
 			// draw lines vertices
 			vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
@@ -1039,8 +1053,6 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					0, nullptr	// dynamic offsets count, ptr
 				);
 			}
-
-			// Camera descriptor set is still bound, but unused(!)
 		
 			// draw all instances:
 			for (ObjectInstance const &inst : object_instances) {
@@ -1059,21 +1071,6 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			}
 		}	// end of draw with objects pipeline
 
-		{	// bind Camera descriptor set:
-			std::array<VkDescriptorSet, 1> descriptor_sets {
-				workspace.Camera_descriptors,	// 0： Camera
-			};
-			vkCmdBindDescriptorSets(
-				workspace.command_buffer,	// command buffer
-				VK_PIPELINE_BIND_POINT_GRAPHICS,	// pipeline bind point
-				lines_pipeline.layout,	// pipeline layout
-				0,	// first set
-				uint32_t(descriptor_sets.size()), descriptor_sets.data(),	// descriptor sets count, ptr
-				0, nullptr	// dynamic offsets count, ptr
-			);
-		}
-
-		// draw lines vertices:
 		vkCmdEndRenderPass(workspace.command_buffer);
 	}
 

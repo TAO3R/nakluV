@@ -184,6 +184,14 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 			}
 		};
 
+		VkPipelineColorBlendStateCreateInfo color_blend_state{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+			.logicOpEnable = VK_FALSE,
+			.attachmentCount = uint32_t(attachment_states.size()),
+			.pAttachments = attachment_states.data(),
+			.blendConstants{0.0f, 0.0f, 0.0f, 0.0f},
+		};
+
 		// reference all parameters specified in one large parameter structure and actually create the pipeline
 		VkGraphicsPipelineCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -195,6 +203,7 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 			.pRasterizationState = &rasterization_state,
 			.pMultisampleState = &multisample_state,
 			.pDepthStencilState = &depth_stencil_state,
+			.pColorBlendState = &color_blend_state,
 			.pDynamicState = &dynamic_state,
 			.layout = layout,
 			.renderPass = render_pass,
