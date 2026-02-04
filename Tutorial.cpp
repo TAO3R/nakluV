@@ -143,6 +143,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	}
 
 	workspaces.resize(rtg.workspaces.size());
+	// std::cout << "workspaces.size(): " << workspaces.size() << std::endl;
 	for (Workspace &workspace : workspaces) {
 		// refsol::Tutorial_constructor_workspace(rtg, command_pool, &workspace.command_buffer);
 		
