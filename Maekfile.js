@@ -27,6 +27,9 @@ custom_flags_and_rules();
 //maek.CPP(...) builds a c++ file:
 // it returns the path to the output object file
 const main_objs = [
+	maek.CPP('print_scene.cpp'),
+	maek.CPP('S72.cpp'),
+	maek.CPP('sejp.cpp'),
 	maek.CPP('Tutorial.cpp'),
 	maek.CPP('PosColVertex.cpp'),
 	maek.CPP('PosNorTexVertex.cpp'),
@@ -112,7 +115,7 @@ function custom_flags_and_rules() {
 		console.log(`Using VULKAN_SDK='${VULKAN_SDK}'; set VULKAN_SDK environment variable to override.`);
 
 		maek.options.CPP = ['cl.exe', '/nologo', '/EHsc', '/Z7', '/std:c++20', '/W4', '/WX', '/MD'];
-		maek.options.LINK = ['link.exe', '/nologo', '/SUBSYSTEM:CONSOLE', '/DEBUG:FASTLINK', '/INCREMENTAL:NO'];
+		maek.options.LINK = ['link.exe', '/nologo', '/SUBSYSTEM:CONSOLE', '/DEBUG:FULL', '/INCREMENTAL:NO'];
 
 		maek.options.CPPFlags = [
 			'/O2',
@@ -295,7 +298,7 @@ function init_maek() {
 	if (maek.OS === 'windows') {
 		DEFAULT_OPTIONS.CPP = ['cl.exe', '/nologo', '/EHsc', '/Z7', '/std:c++17', '/W4', '/WX', '/MD'];
 		//TODO: could embed manifest to set UTF8 codepage
-		DEFAULT_OPTIONS.LINK = ['link.exe', '/nologo', '/SUBSYSTEM:CONSOLE', '/DEBUG:FASTLINK', '/INCREMENTAL:NO'];
+		DEFAULT_OPTIONS.LINK = ['link.exe', '/nologo', '/SUBSYSTEM:CONSOLE', '/DEBUG:FULL', '/INCREMENTAL:NO'];
 	} else if (maek.OS === 'linux') {
 		DEFAULT_OPTIONS.CPP = ['g++', '-std=c++17', '-Wall', '-Werror', '-g'];
 		DEFAULT_OPTIONS.LINK = ['g++', '-std=c++17', '-Wall', '-Werror', '-g'];

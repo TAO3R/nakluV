@@ -7,6 +7,8 @@
 
 #include "RTG.hpp"
 
+#include "S72.hpp"
+
 struct Tutorial : RTG::Application {
 
 	Tutorial(RTG &);
@@ -60,7 +62,6 @@ struct Tutorial : RTG::Application {
 	// as well as a handle to the pipeline itself
 	struct BackgroundPipeline {
 		// no descriptor set layouts
-
 
 		// push constants
 		struct Push {
@@ -138,6 +139,8 @@ struct Tutorial : RTG::Application {
 
 	//-------------------------------------------------------------------
 	//static scene resources:
+
+	S72 scene;
 
 	Helpers::AllocatedBuffer object_vertices;	// stores vertex data for all meshes
 	struct ObjectVertices {

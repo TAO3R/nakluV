@@ -46,6 +46,13 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			surface_extent.height = conv("height");
 		} else if (arg == "--headless") {
 			headless = true;
+		} else if (arg == "--scene") {	// for loading the scene
+			std::cout << "Looking for .s72 files." << std::endl;
+			if (argi + 1 >= argc) throw std::runtime_error("--scene requires a parameter (a .s72 file name).");
+			argi += 1;
+			scene_file = argv[argi];
+		} else if (arg == "--print") {	// for printed the loaded scene info
+			print_scene = true;
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}
@@ -173,7 +180,6 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 		VK( glfwCreateWindowSurface(instance, window, nullptr, &surface) );
 	}
 	
-
 	{	//select the `physical_device` -- the gpu that will be used to draw:
 		std::vector< std::string > physical_device_names; //for later error message
 		{ // pick a physical device

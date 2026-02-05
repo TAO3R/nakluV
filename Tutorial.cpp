@@ -2,6 +2,7 @@
 
 #include "VK.hpp"
 // #include "refsol.hpp"
+#include "print_scene.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -264,6 +265,22 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			);
 		}
 	}	// end of the for-loop for per-workspace descriptor set allocation
+
+	// scene load and info print if specified
+	if (!rtg.configuration.scene_file.empty())
+	{
+		try {
+			scene = S72::load(rtg.configuration.scene_file.data());
+			if (rtg.configuration.print_scene)
+			{
+				print_info(scene);
+				print_scene_graph(scene);
+			}
+		} catch (std::exception &e) {
+			std::cerr << "Failed to load s72-format scene from " << rtg.configuration.scene_file << "\n" << e.what() << std::endl;
+		}
+		
+	}
 
 	{	// create object vertices
 		std::vector<PosNorTexVertex> vertices;
