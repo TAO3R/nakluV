@@ -141,6 +141,8 @@ struct Tutorial : RTG::Application {
 	//static scene resources:
 
 	S72 scene;
+	std::unordered_map<std::string, std::vector<uint8_t>> loaded_data;
+	
 
 	Helpers::AllocatedBuffer object_vertices;	// stores vertex data for all meshes
 	struct ObjectVertices {

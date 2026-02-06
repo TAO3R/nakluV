@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 
 // Constructor
 Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
@@ -279,8 +281,55 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		} catch (std::exception &e) {
 			std::cerr << "Failed to load s72-format scene from " << rtg.configuration.scene_file << "\n" << e.what() << std::endl;
 		}
-		
+	}	// end of scene load and info print
+
+	// load .b72 files into memory the scene is successfully loaded
+	if (scene.scene.name.empty() && scene.scene.roots.empty())
+	{
+		std::cout << "No valid scene loaded." << std::endl;
 	}
+	else
+	{
+		std::cout << "\n[Tutorial.cpp]: loading .b72 binary files into memory." << std::endl;
+		// iterate through all data files referenced by the scene
+		for (auto& [src_name, data_file] : scene.data_files)	// <std::string, DataFile>
+		{
+			// Open file in binary mode, positioned at end
+			std::ifstream file(data_file.path, std::ios::binary | std::ios::ate);
+			
+			// Get file size (we're at end due to ios::ate)
+			size_t size = file.tellg();
+			
+			// Rewind to beginning
+			file.seekg(0, std::ios::beg);
+			
+			// Allocate buffer and read all bytes
+			std::vector<uint8_t> bytes(size);
+			file.read(reinterpret_cast<char*>(bytes.data()), size);
+			
+			// Store in map
+			loaded_data[src_name] = std::move(bytes);
+		}
+
+		// === DEBUG: Print loaded binary file info ===
+		std::cout << "--- Loaded Binary Data Files ---" << std::endl;
+		std::cout << "Total files loaded: " << loaded_data.size() << std::endl;
+
+		size_t total_bytes = 0;
+		for (auto& [src_name, bytes] : loaded_data) {
+			std::cout << "  " << src_name << ": " << bytes.size() << " bytes" << std::endl;
+			total_bytes += bytes.size();
+		}
+
+		std::cout << "Total bytes loaded: " << total_bytes;
+		if (total_bytes > 1024 * 1024) {
+			std::cout << " (" << (total_bytes / (1024.0 * 1024.0)) << " MB)";
+		} else if (total_bytes > 1024) {
+			std::cout << " (" << (total_bytes / 1024.0) << " KB)";
+		}
+		std::cout << std::endl;
+		std::cout << "--------------------------------" << std::endl;
+	}	// end of loading .b72 files
 
 	{	// create object vertices
 		std::vector<PosNorTexVertex> vertices;
