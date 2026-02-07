@@ -140,10 +140,6 @@ struct Tutorial : RTG::Application {
 	//-------------------------------------------------------------------
 	//static scene resources:
 
-	S72 scene;
-	std::unordered_map<std::string, std::vector<uint8_t>> loaded_data;
-	
-
 	Helpers::AllocatedBuffer object_vertices;	// stores vertex data for all meshes
 	struct ObjectVertices {
 		uint32_t first = 0;	// index of the first vertex
@@ -157,6 +153,26 @@ struct Tutorial : RTG::Application {
 	VkSampler texture_sampler = VK_NULL_HANDLE;	// gives the sampler state (wrapping, interpolation, etc) for reading from the textures
 	VkDescriptorPool texture_descriptor_pool = VK_NULL_HANDLE;	// the pool from which we allocate texture descriptor sets
 	std::vector<VkDescriptorSet> texture_descriptors;	// allocated from texture_descriptor_pool
+
+	// A1
+	S72 scene_S72;
+	// .b72 binary files: src -> raw bytes
+	std::unordered_map<std::string, std::vector<uint8_t>> loaded_data;
+	
+	// Per-mesh GPU data, simplified per A1 spec:
+	//  - no indices (all TRIANGLE_LIST, non-indexed)
+	//  - fixed 48-byte interleaved layout: POSITION(12) + NORMAL(12) + TANGENT(16) + TEXCOORD(8)
+	//  - lambertian-only materials
+	struct SceneMesh {
+		ObjectVertices vertices;		// first & count into scene_vertices buffer
+		S72::Material *material;		// pointer to material (always lambertian per spec)
+	};
+	std::unordered_map<std::string,	SceneMesh> scene_meshes;
+
+	// combined vertex buffer for all scene meshes
+	Helpers::AllocatedBuffer scene_vertices;
+	// recursively travere through the scene graph and pushes `ObjectInstance`s into `object_instances`
+	void traverse_node(S72::Node *node, mat4 parent_transform);
 
 	//--------------------------------------------------------------------
 	//Resources that change when the swapchain is resized:

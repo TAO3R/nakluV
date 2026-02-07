@@ -43,6 +43,87 @@ inline mat4 operator*(mat4 const &A, mat4 const &B) {
     return ret;
 }
 
+// identity mat4
+inline mat4 mat4_identity() {
+    return mat4{    // column-major
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+}
+
+// returns the translation matrix given a vec3 position
+inline mat4 mat4_translation( float x, float y, float z) {
+    return mat4{    // column-major
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        x,    y   , z,    1.0f,
+    };
+}
+
+// returns the rotation matrix given a vec4 quaternion
+inline mat4 mat4_rotation(float x, float y, float z, float w) {
+    return mat4{    // column-major
+        1 - 2*(y*y + z*z),  2*(x*y + z*w),      2*(x*z - y*w),      0.0f,
+        2*(x*y - z*w),      1 - 2*(x*x + z*z),  2*(y*z + x*w),      0.0f,
+        2*(x*z + y*w),      2*(y*z - x*w),      1 - 2*(x*x + y*y),  0.0f,
+        0.0f,               0.0f,               0.0f,               1.0f,
+    };
+}
+
+// returns the scaling matrix given a vec3 scale
+inline mat4 mat4_scale(float x, float y, float z) {
+    return mat4{    // column-major
+        x,    0.0f, 0.0f, 0.0f,
+        0.0f, y,    0.0f, 0.0f,
+        0.0f, 0.0f, z,    0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+}
+
+// computes the inverse transpose of a 4x4 matrix.
+// used for transforming normals correctly under non-uniform scale.
+// only the upper-left 3x3 matters for normals; the 4th row/col stays as identity.
+inline mat4 mat4_inverse_transpose(mat4 const &m) {
+    // Use shorthand for the upper-left 3x3 elements (column-major):
+    // Column 0: m[0], m[1], m[2]
+    // Column 1: m[4], m[5], m[6]
+    // Column 2: m[8], m[9], m[10]
+    float a00 = m[0], a01 = m[4], a02 = m[8];
+    float a10 = m[1], a11 = m[5], a12 = m[9];
+    float a20 = m[2], a21 = m[6], a22 = m[10];
+
+    // Cofactors of the 3x3 submatrix:
+    float c00 =  (a11 * a22 - a12 * a21);
+    float c01 = -(a10 * a22 - a12 * a20);
+    float c02 =  (a10 * a21 - a11 * a20);
+
+    float c10 = -(a01 * a22 - a02 * a21);
+    float c11 =  (a00 * a22 - a02 * a20);
+    float c12 = -(a00 * a21 - a01 * a20);
+
+    float c20 =  (a01 * a12 - a02 * a11);
+    float c21 = -(a00 * a12 - a02 * a10);
+    float c22 =  (a00 * a11 - a01 * a10);
+
+    // Determinant via first row expansion:
+    float det = a00 * c00 + a01 * c01 + a02 * c02;
+    float inv_det = 1.0f / det;
+
+    // inverse = cofactor matrix / det
+    // inverse transpose = transpose of (cofactor matrix / det)
+    //                   = (cofactor matrix)^T / det
+    // in column-major, storing the transpose means swapping rows and columns:
+    return mat4{
+        c00 * inv_det, c10 * inv_det, c20 * inv_det, 0.0f,
+        c01 * inv_det, c11 * inv_det, c21 * inv_det, 0.0f,
+        c02 * inv_det, c12 * inv_det, c22 * inv_det, 0.0f,
+        0.0f,          0.0f,          0.0f,          1.0f,
+    };
+}
+
 // perspective projection matrix
 // - vfov is fov *in radians*
 // - near maps to 0, far maps to 1

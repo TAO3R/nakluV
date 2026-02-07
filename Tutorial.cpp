@@ -272,19 +272,19 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	if (!rtg.configuration.scene_file.empty())
 	{
 		try {
-			scene = S72::load(rtg.configuration.scene_file.data());
+			scene_S72 = S72::load(rtg.configuration.scene_file.data());
 			if (rtg.configuration.print_scene)
 			{
-				print_info(scene);
-				print_scene_graph(scene);
+				print_info(scene_S72);
+				print_scene_graph(scene_S72);
 			}
 		} catch (std::exception &e) {
 			std::cerr << "Failed to load s72-format scene from " << rtg.configuration.scene_file << "\n" << e.what() << std::endl;
 		}
 	}	// end of scene load and info print
 
-	// load .b72 files into memory the scene is successfully loaded
-	if (scene.scene.name.empty() && scene.scene.roots.empty())
+	// load .b72 files into memory if the scene is successfully loaded
+	if (scene_S72.scene.name.empty() && scene_S72.scene.roots.empty())
 	{
 		std::cout << "No valid scene loaded." << std::endl;
 	}
@@ -292,7 +292,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	{
 		std::cout << "\n[Tutorial.cpp]: loading .b72 binary files into memory." << std::endl;
 		// iterate through all data files referenced by the scene
-		for (auto& [src_name, data_file] : scene.data_files)	// <std::string, DataFile>
+		for (auto& [src_name, data_file] : scene_S72.data_files)	// <std::string, DataFile>
 		{
 			// Open file in binary mode, positioned at end
 			std::ifstream file(data_file.path, std::ios::binary | std::ios::ate);
@@ -329,7 +329,111 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 		std::cout << std::endl;
 		std::cout << "--------------------------------" << std::endl;
+
 	}	// end of loading .b72 files
+
+	{	// construct scene meshes from loaded binary files and upload to the GPU
+		// Per A1 spec:
+		//  - No indices (non-indexed TRIANGLE_LIST only)
+		//  - All attributes interleaved at stride 48:
+		//      POSITION  offset  0  R32G32B32_SFLOAT    (12 bytes)
+		//      NORMAL    offset 12  R32G32B32_SFLOAT    (12 bytes)
+		//      TANGENT   offset 24  R32G32B32A32_SFLOAT (16 bytes, skipped for now)
+		//      TEXCOORD  offset 40  R32G32_SFLOAT       ( 8 bytes)
+		//  - Materials are always lambertian
+
+		if (!loaded_data.empty())
+		{
+			std::vector<PosNorTexVertex> all_vertices;
+
+			for (auto& [mesh_name, mesh] : scene_S72.meshes)
+			{
+				SceneMesh scene_mesh;
+				scene_mesh.material = mesh.material;
+				scene_mesh.vertices.first = uint32_t(all_vertices.size());
+
+				// attribute
+				auto pos_it = mesh.attributes.find("POSITION");
+				auto nor_it = mesh.attributes.find("NORMAL");
+				auto tex_it = mesh.attributes.find("TEXCOORD");
+
+				if (pos_it == mesh.attributes.end()) {
+					std::cerr << "[Tutorial.cpp]: Mesh '" << mesh_name << "' missing POSITION attribute, skipping.\n";
+					continue;
+				}
+
+				auto& pos_attr = pos_it->second;
+
+				// All attributes should reference the same src file with stride 48 per spec.
+				// We use POSITION's src as the base buffer.
+				auto data_it = loaded_data.find(pos_attr.src.src);
+				if (data_it == loaded_data.end()) {
+					std::cerr << "[Tutorial.cpp]: Mesh '" << mesh_name << "' references data file '" << pos_attr.src.src << "' which was not loaded, skipping.\n";
+					continue;
+				}
+				const uint8_t* base_data = data_it->second.data();
+				const size_t   base_size = data_it->second.size();
+
+				// Expected offsets within each 48-byte vertex stride:
+				const uint32_t stride   = pos_attr.stride;  // should be 48
+				const uint32_t pos_off  = pos_attr.offset;  // should be 0
+				const uint32_t nor_off  = (nor_it != mesh.attributes.end()) ? nor_it->second.offset : 12;
+				const uint32_t tex_off  = (tex_it != mesh.attributes.end()) ? tex_it->second.offset : 40;
+
+				// Non-indexed: mesh.count is the vertex count directly
+				const uint32_t vertex_count = mesh.count;
+
+				// Bounds check
+				if (pos_off + vertex_count * stride > base_size) {
+					std::cerr << "[Tutorial.cpp]: Mesh '" << mesh_name << "' attribute data exceeds buffer size, skipping.\n";
+					continue;
+				}
+
+				// Extract vertices, skipping TANGENT (we don't need it for now)
+				all_vertices.reserve(all_vertices.size() + vertex_count);
+				for (uint32_t i = 0; i < vertex_count; ++i)
+				{
+					const uint8_t* vertex_base = base_data + i * stride;
+
+					const float* pos = reinterpret_cast<const float*>(vertex_base + pos_off);
+					const float* nor = reinterpret_cast<const float*>(vertex_base + nor_off);
+					const float* tex = reinterpret_cast<const float*>(vertex_base + tex_off);
+
+					all_vertices.push_back(PosNorTexVertex{
+						.Position{.x = pos[0], .y = pos[1], .z = pos[2]},
+						.Normal  {.x = nor[0], .y = nor[1], .z = nor[2]},
+						.TexCoord{.s = tex[0], .t = tex[1]},
+					});
+				}
+
+				scene_mesh.vertices.count = vertex_count;
+				scene_meshes[mesh_name] = scene_mesh;
+
+				std::cout << "[Tutorial.cpp]: Loaded mesh '" << mesh_name << "': " << vertex_count
+				          << " vertices (" << vertex_count / 3 << " triangles)" << std::endl;
+			}	// end of the for-loop for scene mesh traversal
+
+			// upload to the GPU
+			if (!all_vertices.empty())
+			{
+				size_t bytes = all_vertices.size() * sizeof(PosNorTexVertex);
+				scene_vertices = rtg.helpers.create_buffer(
+					bytes,
+					VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+					Helpers::Unmapped
+				);
+				rtg.helpers.transfer_to_buffer(all_vertices.data(), bytes, scene_vertices);
+
+				std::cout << "[Tutorial.cpp]: Uploaded " << all_vertices.size() << " scene vertices ("
+				          << bytes << " bytes) to GPU." << std::endl;
+			}
+		}
+		else
+		{
+			std::cout << "[Tutorial.cpp]: no binary data loaded when trying to construct scene meshes." << std::endl;
+		}
+	}
 
 	{	// create object vertices
 		std::vector<PosNorTexVertex> vertices;
@@ -503,7 +607,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			//transfer data:
 			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
 		}
-	}
+	}	// end of making some textures
 
 	{ // make image views for the textures
 		texture_views.reserve(textures.size());
@@ -615,7 +719,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 		vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
 	}
-}	// end of Tutorial
+}	// end of Tutorial constructor
 
 // Destructor
 Tutorial::~Tutorial() {
@@ -651,6 +755,12 @@ Tutorial::~Tutorial() {
 	textures.clear();
 
 	rtg.helpers.destroy_buffer(std::move(object_vertices));
+
+	// A1: scene data cleanup
+	if (scene_vertices.handle != VK_NULL_HANDLE)
+	{
+		rtg.helpers.destroy_buffer(std::move(scene_vertices));
+	}
 
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE) {
 		destroy_framebuffers();
@@ -718,6 +828,40 @@ Tutorial::~Tutorial() {
 	if (render_pass != VK_NULL_HANDLE) {
 		vkDestroyRenderPass(rtg.device, render_pass, nullptr);
 		render_pass = VK_NULL_HANDLE;
+	}
+}
+
+// A1
+void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
+{
+	// 1. Compute this node's local transform from its TRS components:
+	//    local_transform = T * R * S  (scale first, then rotate, then translate)
+	mat4 local_transform = mat4_translation(node->translation.x, node->translation.y, node->translation.z)
+						 * mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w)
+						 * mat4_scale(node->scale.x, node->scale.y, node->scale.z);
+
+	// 2. Accumulate with parent: WORLD_FROM_LOCAL = parent_transform * local_transform
+	mat4 WOLRD_FROM_LOCAL = parent_transform * local_transform;
+
+	// 3. If this node has a mesh, emit an ObjectInstance:
+	//    a. Look up the mesh name in scene_meshes to get the ObjectVertices (first/count)
+	//    b. Compute CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL
+	//    c. Compute WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL
+	//       (needed to correctly transform normals when non-uniform scale is present;
+	//        if scale is uniform, WORLD_FROM_LOCAL itself works fine as a shortcut)
+	//    d. Push an ObjectInstance with vertices, transform, and texture index
+	if (node->mesh != nullptr)
+	{
+		Tutorial::ObjectVertices vert = scene_meshes.find(node->mesh->name)->second.vertices;
+		mat4 CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WOLRD_FROM_LOCAL;
+		mat4 WORLD_FROM_LOCAL_NORMAL = WOLRD_FROM_LOCAL;
+		object_instances.emplace_back()
+	}
+
+	// 4. Recurse into children, passing WORLD_FROM_LOCAL as their parent_transform
+	for (auto& child_node : node->children)
+	{
+		traverse_node(child_node, WOLRD_FROM_LOCAL);
 	}
 }
 
@@ -795,7 +939,6 @@ void Tutorial::destroy_framebuffers() {
 
 	rtg.helpers.destroy_image(std::move(swapchain_depth_image));
 }
-
 
 void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	//assert that parameters are valid:
@@ -1100,8 +1243,10 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		{	// draw with the objects pipeline:
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
 
-			{	// use object_vertices (offset 0) as vertex buffer binding 0:
-				std::array<VkBuffer, 1> vertex_buffers{object_vertices.handle};
+			{	// A1: bind the appropriate vertex buffer:
+				// if a scene was loaded, use scene_vertices; otherwise use the hardcoded object_vertices
+				VkBuffer vb = (scene_vertices.handle != VK_NULL_HANDLE) ? scene_vertices.handle : object_vertices.handle;
+				std::array<VkBuffer, 1> vertex_buffers{vb};
 				std::array<VkDeviceSize, 1> offsets{0};
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 			}
@@ -1175,7 +1320,6 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 }
 
-
 void Tutorial::update(float dt) {
 	// modify time in every update
 	time = std::fmod(time + dt, 60.0f);
@@ -1227,7 +1371,7 @@ void Tutorial::update(float dt) {
 
 	{	// day/night cycle sun and sky:
 		// 1. Define cycle parameters
-		const float dayDuration = 6.0f; // Full day/night cycle in seconds
+		const float dayDuration = 60.0f; // Full day/night cycle in seconds
 		float sunAngle = (time / dayDuration) * 2.0f * 3.14159f;
 
 		// 2. Calculate Sun Direction (Rotating around the X or Y axis)
@@ -1464,44 +1608,75 @@ void Tutorial::update(float dt) {
 	{	// make some objects:
 		object_instances.clear();
 
-		{	// plane translated +x by one unit:
-			mat4 WORLD_FROM_LOCAL {
-				1.0f, 0.0f, 0.0f, 0.0f,
-				0.0f, 1.0f, 0.0f, 0.0f,
-				0.0f, 0.0f, 1.0f, 0.0f,
-				1.0f, 0.0f, 0.0f, 1.0f,
-			};
+		if (scene_vertices.handle != VK_NULL_HANDLE)
+		{	// scene loaded: create instances from scene meshes
+			// TODO: traverse scene graph to compute proper world transforms
+			// For now, place each mesh at the origin with identity transform
+			for (auto& [mesh_name, mesh] : scene_meshes) {
+				mat4 WORLD_FROM_LOCAL{
+					1.0f, 0.0f, 0.0f, 0.0f,
+					0.0f, 1.0f, 0.0f, 0.0f,
+					0.0f, 0.0f, 1.0f, 0.0f,
+					0.0f, 0.0f, 0.0f, 1.0f,
+				};
 
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = plane_vertices,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
-				},
-				.texture = 1,
-			});
-		}	// end of plane translation
-		{	// torus translated -x by one unit and rotated CCW around +y:
-			float ang = time / 60.0f * 2.0f * float(M_PI) * 10.0f;
-			float ca = std::cos(ang);
-			float sa = std::sin(ang);
-			mat4 WORLD_FROM_LOCAL{
-				ca, 0.0f,  -sa, 0.0f,
-				0.0f, 1.0f, 0.0f, 0.0f,
-				  sa, 0.0f,   ca, 0.0f,
-				-1.0f,0.0f, 0.0f, 1.0f,
-			};
+				object_instances.emplace_back(ObjectInstance{
+					.vertices = mesh.vertices,
+					.transform{
+						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
+					},
+				});
+			}
 
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = torus_vertices,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
-				},
-			});
-		}	// end of torus translation and rotation
+			// scene graph traverse
+			for (auto& root : scene_S72.scene.roots)
+			{
+				traverse_node(root, mat4_identity());
+			}
+		}
+		else
+		{	// no scene: use hardcoded plane and torus
+			{	// plane translated +x by one unit:
+				mat4 WORLD_FROM_LOCAL {
+					1.0f, 0.0f, 0.0f, 0.0f,
+					0.0f, 1.0f, 0.0f, 0.0f,
+					0.0f, 0.0f, 1.0f, 0.0f,
+					1.0f, 0.0f, 0.0f, 1.0f,
+				};
+
+				object_instances.emplace_back(ObjectInstance{
+					.vertices = plane_vertices,
+					.transform{
+						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
+					},
+					.texture = 1,
+				});
+			}	// end of plane translation
+			{	// torus translated -x by one unit and rotated CCW around +y:
+				float ang = time / 60.0f * 2.0f * float(M_PI) * 10.0f;
+				float ca = std::cos(ang);
+				float sa = std::sin(ang);
+				mat4 WORLD_FROM_LOCAL{
+					ca, 0.0f,  -sa, 0.0f,
+					0.0f, 1.0f, 0.0f, 0.0f,
+					  sa, 0.0f,   ca, 0.0f,
+					-1.0f,0.0f, 0.0f, 1.0f,
+				};
+
+				object_instances.emplace_back(ObjectInstance{
+					.vertices = torus_vertices,
+					.transform{
+						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
+					},
+				});
+			}	// end of torus translation and rotation
+		}
 
 	}	// end of make some objects
 }	// end of update
