@@ -544,7 +544,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
 	}
 
-	{ // make some textures
+	{ 	// make some textures
 		textures.reserve(2);
 
 		{ // texture 0 will be a dark grey / light grey checkerboard with a red square at the origin.
@@ -609,7 +609,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}	// end of making some textures
 
-	{ // make image views for the textures
+	{ 	// make image views for the textures
 		texture_views.reserve(textures.size());
 		for (Helpers::AllocatedImage const &image : textures) {
 			VkImageViewCreateInfo create_info{
@@ -841,7 +841,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 						 * mat4_scale(node->scale.x, node->scale.y, node->scale.z);
 
 	// 2. Accumulate with parent: WORLD_FROM_LOCAL = parent_transform * local_transform
-	mat4 WOLRD_FROM_LOCAL = parent_transform * local_transform;
+	mat4 WORLD_FROM_LOCAL = parent_transform * local_transform;
 
 	// 3. If this node has a mesh, emit an ObjectInstance:
 	//    a. Look up the mesh name in scene_meshes to get the ObjectVertices (first/count)
@@ -852,18 +852,27 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 	//    d. Push an ObjectInstance with vertices, transform, and texture index
 	if (node->mesh != nullptr)
 	{
-		Tutorial::ObjectVertices vert = scene_meshes.find(node->mesh->name)->second.vertices;
-		mat4 CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WOLRD_FROM_LOCAL;
-		mat4 WORLD_FROM_LOCAL_NORMAL = WOLRD_FROM_LOCAL;
-		object_instances.emplace_back()
+		auto it = scene_meshes.find(node->mesh->name);
+		if (it == scene_meshes.end()) { return; }
+
+		mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
+		object_instances.emplace_back(ObjectInstance{
+			.vertices = it->second.vertices,
+			.transform {
+				.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+				.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+				.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
+			}
+		});
 	}
 
 	// 4. Recurse into children, passing WORLD_FROM_LOCAL as their parent_transform
 	for (auto& child_node : node->children)
 	{
-		traverse_node(child_node, WOLRD_FROM_LOCAL);
+		traverse_node(child_node, WORLD_FROM_LOCAL);
 	}
-}
+
+}	// end of traverse_node
 
 void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 	//[re]create framebuffers:
@@ -1352,66 +1361,66 @@ void Tutorial::update(float dt) {
 	}
 
 	{	// static sun and sky:
-		// world.SKY_DIRECTION.x = 0.0f;
-		// world.SKY_DIRECTION.y = 0.0f;
-		// world.SKY_DIRECTION.z = 1.0f;
-
-		// world.SKY_ENERGY.r = 0.1f;
-		// world.SKY_ENERGY.g = 0.1f;
-		// world.SKY_ENERGY.b = 0.2f;
-
-		// world.SUN_DIRECTION.x = 6.0f / 23.0f;
-		// world.SUN_DIRECTION.y = 13.0f / 23.0f;
-		// world.SUN_DIRECTION.z = 18.0f / 23.0f;
-
-		// world.SUN_ENERGY.r = 1.0f;
-		// world.SUN_ENERGY.g = 1.0f;
-		// world.SUN_ENERGY.b = 0.9f;
-	}
-
-	{	// day/night cycle sun and sky:
-		// 1. Define cycle parameters
-		const float dayDuration = 60.0f; // Full day/night cycle in seconds
-		float sunAngle = (time / dayDuration) * 2.0f * 3.14159f;
-
-		// 2. Calculate Sun Direction (Rotating around the X or Y axis)
-		// Here we rotate in the YZ plane to simulate the sun rising and setting
-		world.SUN_DIRECTION.x = 0.0f;
-		world.SUN_DIRECTION.y = sin(sunAngle); 
-		world.SUN_DIRECTION.z = cos(sunAngle); // Height in the sky
-
-		// 3. Calculate Sun Intensity/Color based on height (z-component)
-		float sunHeight = world.SUN_DIRECTION.z;
-		
-		if (sunHeight > 0.0f) {
-			// Daytime: Sun is above the horizon
-			// Use smoothstep or clamp to transition colors during sunrise/sunset
-			float intensity = sunHeight > 0.0f ? sunHeight : 0.0f;
-			
-			world.SUN_ENERGY.r = 1.0f;
-			world.SUN_ENERGY.g = 0.8f + (0.2f * intensity); // Whiter at noon, yellower at sunset
-			world.SUN_ENERGY.b = 0.5f + (0.4f * intensity);
-			
-			// Sky gets brighter during the day
-			world.SKY_ENERGY.r = 0.1f * intensity;
-			world.SKY_ENERGY.g = 0.2f * intensity;
-			world.SKY_ENERGY.b = 0.5f * intensity;
-		} else {
-			// Nighttime: Sun is below the horizon
-			world.SUN_ENERGY.r = 0.0f;
-			world.SUN_ENERGY.g = 0.0f;
-			world.SUN_ENERGY.b = 0.0f;
-
-			// Dim ambient moon/star light for the sky
-			world.SKY_ENERGY.r = 0.01f;
-			world.SKY_ENERGY.g = 0.01f;
-			world.SKY_ENERGY.b = 0.03f;
-		}
-
-		// Sky direction stays constant (up) or can subtly shift
 		world.SKY_DIRECTION.x = 0.0f;
 		world.SKY_DIRECTION.y = 0.0f;
 		world.SKY_DIRECTION.z = 1.0f;
+
+		world.SKY_ENERGY.r = 0.1f;
+		world.SKY_ENERGY.g = 0.1f;
+		world.SKY_ENERGY.b = 0.2f;
+
+		world.SUN_DIRECTION.x = 6.0f / 23.0f;
+		world.SUN_DIRECTION.y = 13.0f / 23.0f;
+		world.SUN_DIRECTION.z = 18.0f / 23.0f;
+
+		world.SUN_ENERGY.r = 1.0f;
+		world.SUN_ENERGY.g = 1.0f;
+		world.SUN_ENERGY.b = 0.9f;
+	}
+
+	{	// day/night cycle sun and sky:
+		// // 1. Define cycle parameters
+		// const float dayDuration = 60.0f; // Full day/night cycle in seconds
+		// float sunAngle = (time / dayDuration) * 2.0f * 3.14159f;
+
+		// // 2. Calculate Sun Direction (Rotating around the X or Y axis)
+		// // Here we rotate in the YZ plane to simulate the sun rising and setting
+		// world.SUN_DIRECTION.x = 0.0f;
+		// world.SUN_DIRECTION.y = sin(sunAngle); 
+		// world.SUN_DIRECTION.z = cos(sunAngle); // Height in the sky
+
+		// // 3. Calculate Sun Intensity/Color based on height (z-component)
+		// float sunHeight = world.SUN_DIRECTION.z;
+		
+		// if (sunHeight > 0.0f) {
+		// 	// Daytime: Sun is above the horizon
+		// 	// Use smoothstep or clamp to transition colors during sunrise/sunset
+		// 	float intensity = sunHeight > 0.0f ? sunHeight : 0.0f;
+			
+		// 	world.SUN_ENERGY.r = 1.0f;
+		// 	world.SUN_ENERGY.g = 0.8f + (0.2f * intensity); // Whiter at noon, yellower at sunset
+		// 	world.SUN_ENERGY.b = 0.5f + (0.4f * intensity);
+			
+		// 	// Sky gets brighter during the day
+		// 	world.SKY_ENERGY.r = 0.1f * intensity;
+		// 	world.SKY_ENERGY.g = 0.2f * intensity;
+		// 	world.SKY_ENERGY.b = 0.5f * intensity;
+		// } else {
+		// 	// Nighttime: Sun is below the horizon
+		// 	world.SUN_ENERGY.r = 0.0f;
+		// 	world.SUN_ENERGY.g = 0.0f;
+		// 	world.SUN_ENERGY.b = 0.0f;
+
+		// 	// Dim ambient moon/star light for the sky
+		// 	world.SKY_ENERGY.r = 0.01f;
+		// 	world.SKY_ENERGY.g = 0.01f;
+		// 	world.SKY_ENERGY.b = 0.03f;
+		// }
+
+		// // Sky direction stays constant (up) or can subtly shift
+		// world.SKY_DIRECTION.x = 0.0f;
+		// world.SKY_DIRECTION.y = 0.0f;
+		// world.SKY_DIRECTION.z = 1.0f;
 	}
 
 	{	// draw a cube with LinesPipeline
@@ -1610,27 +1619,8 @@ void Tutorial::update(float dt) {
 
 		if (scene_vertices.handle != VK_NULL_HANDLE)
 		{	// scene loaded: create instances from scene meshes
-			// TODO: traverse scene graph to compute proper world transforms
-			// For now, place each mesh at the origin with identity transform
-			for (auto& [mesh_name, mesh] : scene_meshes) {
-				mat4 WORLD_FROM_LOCAL{
-					1.0f, 0.0f, 0.0f, 0.0f,
-					0.0f, 1.0f, 0.0f, 0.0f,
-					0.0f, 0.0f, 1.0f, 0.0f,
-					0.0f, 0.0f, 0.0f, 1.0f,
-				};
-
-				object_instances.emplace_back(ObjectInstance{
-					.vertices = mesh.vertices,
-					.transform{
-						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-						.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-						.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
-					},
-				});
-			}
-
-			// scene graph traverse
+			
+			// traverse scene graph to compute proper world transforms and push object instances
 			for (auto& root : scene_S72.scene.roots)
 			{
 				traverse_node(root, mat4_identity());
