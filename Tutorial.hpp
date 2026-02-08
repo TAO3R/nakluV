@@ -218,8 +218,9 @@ struct Tutorial : RTG::Application {
 		S72::Camera *camera;
 		mat4 WORLD_FROM_CAMERA;
 	};
-	std::vector<std::pair<SceneCamera, S72::Node*>> scene_cameras;
+	std::vector<SceneCamera> scene_cameras;
 	uint32_t scene_camera_index = 0;
+	mat4 CULLING_CLIP_FROM_WORLD;
 
 	// TODO [Debug camera mode]:
 	//  - Add a second OrbitCamera (e.g., debug_camera) for the debug view.
