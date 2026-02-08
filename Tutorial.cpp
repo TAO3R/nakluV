@@ -283,7 +283,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}	// end of scene load and info print
 
-	// load .b72 files into memory if the scene is successfully loaded
+	// A1: load .b72 files into memory if the scene is successfully loaded
 	if (scene_S72.scene.name.empty() && scene_S72.scene.roots.empty())
 	{
 		std::cout << "No valid scene loaded." << std::endl;
@@ -332,7 +332,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 	}	// end of loading .b72 files
 
-	{	// construct scene meshes from loaded binary files and upload to the GPU
+	{	// A1: construct scene meshes from loaded binary files and upload to the GPU
 		// Per A1 spec:
 		//  - No indices (non-indexed TRIANGLE_LIST only)
 		//  - All attributes interleaved at stride 48:
@@ -435,13 +435,15 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}	// end of scene mesh construction
 
-	{	// populate scene_cameras if a scene is loaded, set camera if specified
-		for (auto& root : scene_S72.scene.roots)
+	{	// A1: build SecneCamera instances from the scene and set camera (index & mode) if specified
+		if (!rtg.configuration.scene_file.empty())
 		{
-			collect_cameras(root, mat4_identity());
+			for (auto &root : scene_S72.scene.roots)
+			{
+				collect_cameras(root, mat4_identity());
+			}
 		}
-
-		// a scene camera is specified, set scene_camera_index and set camera mode
+		
 		if (!rtg.configuration.scene_camera.empty())
 		{
 			for (uint32_t i = 0; i < scene_cameras.size(); ++i) {
@@ -451,7 +453,15 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 				}
 			}
 
-			camera_mode = CameraMode::Scene;
+			if (scene_camera_index == -1)
+			{
+				std::cerr << "[Tutorial.cpp]: Cannot find a scene camera with the specified name." << std::endl;
+				std::exit(1);
+			}
+			else
+			{
+				camera_mode = CameraMode::Scene;
+			}
 		}
 	}
 
@@ -854,22 +864,22 @@ Tutorial::~Tutorial() {
 // A1
 void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 {
-	// 1. Compute this node's local transform from its TRS components:
-	//    local_transform = T * R * S  (scale first, then rotate, then translate)
+	//	Compute this node's local transform from its TRS components:
+	// 	local_transform = T * R * S  (scale first, then rotate, then translate)
 	mat4 local_transform = mat4_translation(node->translation.x, node->translation.y, node->translation.z)
 						 * mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w)
 						 * mat4_scale(node->scale.x, node->scale.y, node->scale.z);
 
-	// 2. Accumulate with parent: WORLD_FROM_LOCAL = parent_transform * local_transform
+	//	Accumulate with parent: WORLD_FROM_LOCAL = parent_transform * local_transform
 	mat4 WORLD_FROM_LOCAL = parent_transform * local_transform;
 
-	// 3. If this node has a mesh, emit an ObjectInstance:
-	//    a. Look up the mesh name in scene_meshes to get the ObjectVertices (first/count)
-	//    b. Compute CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL
-	//    c. Compute WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL
-	//       (needed to correctly transform normals when non-uniform scale is present;
-	//        if scale is uniform, WORLD_FROM_LOCAL itself works fine as a shortcut)
-	//    d. Push an ObjectInstance with vertices, transform, and texture index
+	//	If this node has a mesh, emit an ObjectInstance:
+	//  a. Look up the mesh name in scene_meshes to get the ObjectVertices (first/count)
+	//  b. Compute CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL
+	//  c. Compute WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL
+	//     (needed to correctly transform normals when non-uniform scale is present;
+	//      if scale is uniform, WORLD_FROM_LOCAL itself works fine as a shortcut)
+	//  d. Push an ObjectInstance with vertices, transform, and texture index
 	if (node->mesh != nullptr)
 	{
 		auto it = scene_meshes.find(node->mesh->name);
@@ -886,7 +896,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 		});
 	}
 
-	// 4. Recurse into children, passing WORLD_FROM_LOCAL as their parent_transform
+	//	Recurse into children, passing WORLD_FROM_LOCAL as their parent_transform
 	for (auto& child_node : node->children)
 	{
 		traverse_node(child_node, WORLD_FROM_LOCAL);
@@ -894,24 +904,30 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 
 }	// end of traverse_node
 
+// A1
 void Tutorial::collect_cameras(S72::Node *node, mat4 parent_transform)
 {
 	mat4 local_transform = mat4_translation(node->translation.x, node->translation.y, node->translation.z)
-              			 * mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w)
-              			 * mat4_scale(node->scale.x, node->scale.y, node->scale.z);
-	mat4 world_transform = parent_transform * local_transform;
+						 * mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w)
+						 * mat4_scale(node->scale.x, node->scale.y, node->scale.z);
+
+	mat4 WORLD_FROM_LOCAL = parent_transform * local_transform;
 	
-	if (node->camera != nullptr) {
-        scene_cameras.emplace_back(
+	//	If this node has a camera, emit a SceneCamera:
+	if (node->camera != nullptr)
+	{
+		scene_cameras.emplace_back(
 			SceneCamera{
 				.camera = node->camera,
-				.WORLD_FROM_CAMERA = world_transform
+				.WORLD_FROM_CAMERA = WORLD_FROM_LOCAL,
 			});
 		std::cout << "[Tutorial.cpp]: Emplacing camera: {" << node->camera->name << "} into scene_cameras." << std::endl;
-    }
-    for (auto* child : node->children) {
-        collect_cameras(child, world_transform);
-    }
+	}
+
+	for (auto &child_node : node->children)
+	{
+		collect_cameras(child_node, WORLD_FROM_LOCAL);
+	}
 }	// end of collect_cameras
 
 void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {

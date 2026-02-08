@@ -171,10 +171,8 @@ struct Tutorial : RTG::Application {
 
 	// combined vertex buffer for all scene meshes
 	Helpers::AllocatedBuffer scene_vertices;
-	// recursively travere through the scene graph and pushes `ObjectInstance`s into `object_instances`
+	// recursively travere through the scene graph and pushes `ObjectInstance`s and `SceneCamera`s into `object_instances` and `scene_cameras`
 	void traverse_node(S72::Node *node, mat4 parent_transform);
-	// recursively traverse through the scene graph and populates scene_cameras
-	void collect_cameras(S72::Node *node, mat4 parent_transform);
 
 	//--------------------------------------------------------------------
 	//Resources that change when the swapchain is resized:
@@ -198,38 +196,24 @@ struct Tutorial : RTG::Application {
 
 	float time = 0.0f;
 
-	// for selecting between cameras:
+	// A1: for selecting between cameras:
 	enum class CameraMode {
 		Scene = 0,	// renders through a scene camera; user cannot move it, but can cycle between scene cameras
 		User  = 1,	// renders through a user-controlled orbit camera (keyboard+mouse)
 		Debug = 2,	// renders through a second user-controlled camera; culling uses the *previously active* camera
 	} camera_mode = CameraMode::User;
 
-	// TODO [Scene camera mode]:
-	//  - Add a vector of S72::Camera*/S72::Node* pairs discovered during scene loading or traversal,
-	//    representing all cameras in the scene (each has exactly one instance per spec).
-	//  - Add an index (e.g., uint32_t scene_camera_index) to track which scene camera is active.
-	//  - The scene camera's CLIP_FROM_WORLD is built from the camera's perspective params
-	//    and the node's accumulated world transform (inverted, since it's a view matrix).
-	// Collected once at startup via collect_cameras().
-	// Stores pointers to the Camera and its owning Node (for world transform).
-	// Use scene_camera_index to cycle through them; look up by name for --camera arg.
+	// A1: struct for scene camera mode:
 	struct SceneCamera {
 		S72::Camera *camera;
 		mat4 WORLD_FROM_CAMERA;
 	};
 	std::vector<SceneCamera> scene_cameras;
-	uint32_t scene_camera_index = 0;
-	mat4 CULLING_CLIP_FROM_WORLD;
+	int scene_camera_index = -1;
+	mat4 CULLING_CLIP_FROM_WORLD;	// recording culling matrix when entering debug camera mode
+	void collect_cameras(S72::Node *node, mat4 parent_transform);
 
-	// TODO [Debug camera mode]:
-	//  - Add a second OrbitCamera (e.g., debug_camera) for the debug view.
-	//  - Store the CLIP_FROM_WORLD of the previously-active camera (before switching to debug)
-	//    so that culling can still be done against it.
-	//  - In debug mode, use debug_camera's CLIP_FROM_WORLD for *rendering*,
-	//    but the stored/previous camera's frustum for *culling*.
-
-	// used when camera_mode == CameraMode::User (or Debug):
+	// A1: used when camera_mode == CameraMode::User (or Debug):
 	struct OrbitCamera {
 		float target_x = 0.0f, target_y = 0.0f, target_z = 0.0f;	// where the camera is looking + orbiting
 		float radius = 2.0f;	// distance from camera to target
@@ -239,8 +223,8 @@ struct Tutorial : RTG::Application {
 		float fov = 60.0f / 180.0f * float (M_PI);
 		float near = 0.1f;	// near clipping plane
 		float far = 1000.0f;	// far clipping plane
-	}	free_camera;
-	OrbitCamera debug_camera;
+	}	free_camera;	// user camera mode
+	OrbitCamera debug_camera;	// debug camera mode
 
 	// computed from the current camera (as set by camera_mode) during update():
 	mat4 CLIP_FROM_WORLD;
