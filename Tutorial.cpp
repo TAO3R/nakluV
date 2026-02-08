@@ -268,7 +268,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}	// end of the for-loop for per-workspace descriptor set allocation
 
-	// scene load and info print if specified
+	// A1: scene load and info print if specified
 	if (!rtg.configuration.scene_file.empty())
 	{
 		try {
@@ -432,6 +432,24 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		else
 		{
 			std::cout << "[Tutorial.cpp]: no binary data loaded when trying to construct scene meshes." << std::endl;
+		}
+	}	// end of scene mesh construction
+
+	{	// populate scene_cameras if a scene is loaded, set camera if specified
+		for (auto& root : scene_S72.scene.roots)
+		{
+			collect_cameras(root, mat4_identity());
+		}
+
+		// a scene camera is specified, set scene_camera_index
+		if (!rtg.configuration.scene_camera.empty())
+		{
+			for (uint32_t i = 0; i < scene_cameras.size(); ++i) {
+				if (scene_cameras[i].camera->name == rtg.configuration.scene_camera) {
+					scene_camera_index = i;
+					break;
+				}
+			}
 		}
 	}
 
@@ -873,6 +891,26 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 	}
 
 }	// end of traverse_node
+
+void Tutorial::collect_cameras(S72::Node *node, mat4 parent_transform)
+{
+	mat4 local = mat4_translation(node->translation.x, node->translation.y, node->translation.z)
+               * mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w)
+               * mat4_scale(node->scale.x, node->scale.y, node->scale.z);
+	mat4 world = parent_transform * local;
+	
+	if (node->camera != nullptr) {
+        scene_cameras.emplace_back(
+			SceneCamera{
+				.camera = node->camera,
+				.WORLD_FROM_CAMERA = world
+			});
+		std::cout << "[Tutorial.cpp]: Emplacing camera: {" << node->camera->name << "} into scene_cameras." << std::endl;
+    }
+    for (auto* child : node->children) {
+        collect_cameras(child, world);
+    }
+}	// end of collect_cameras
 
 void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 	//[re]create framebuffers:
@@ -1334,19 +1372,32 @@ void Tutorial::update(float dt) {
 	time = std::fmod(time + dt, 60.0f);
 
 	if (camera_mode == CameraMode::Scene) {
-		// camera orbiting the origin:
-		float ang = float(M_PI) * 2.0f * 10.0f * (time / 60.0f);
-		CLIP_FROM_WORLD = perspective(
-			60.0f * float(M_PI) /180.0f,	// vfov
-			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect
-			0.1f,	// near
-			1000.0f	// far
-		) * look_at(
-			3.0f * std::cos(ang), 3.0f * std::sin(ang), 1.0f, 	//eye
-			0.0f, 0.0f, 0.5f, 	// target
-			0.0f, 0.0f, 1.0f	// up
-		);
-	} else if (camera_mode == CameraMode::Free) {
+		// TODO [Scene camera mode]:
+		//  1. Get the currently-selected scene camera (by scene_camera_index).
+		//  2. Get the camera's S72::Camera::Perspective params (vfov, aspect, near, far).
+		//  3. Get the camera node's accumulated world transform from the scene graph.
+		//  4. Invert the world transform to get WORLD_FROM_CAMERA -> CAMERA_FROM_WORLD (view matrix).
+		//  5. CLIP_FROM_WORLD = perspective(...) * CAMERA_FROM_WORLD.
+		//  Note: the user cannot move this camera; they can only cycle to the next one (handled in on_input).
+
+		// placeholder: orbiting camera (replace with scene camera logic)
+		// float ang = float(M_PI) * 2.0f * 10.0f * (time / 60.0f);
+		// CLIP_FROM_WORLD = perspective(
+		// 	60.0f * float(M_PI) /180.0f,	// vfov
+		// 	rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect
+		// 	0.1f,	// near
+		// 	1000.0f	// far
+		// ) * look_at(
+		// 	3.0f * std::cos(ang), 3.0f * std::sin(ang), 1.0f, 	//eye
+		// 	0.0f, 0.0f, 0.5f, 	// target
+		// 	0.0f, 0.0f, 1.0f	// up
+		// );
+
+		auto& sc = scene_cameras[scene_camera_index];
+		auto& persp = std::get<S72::Camera::Perspective>(sc.camera->projection);
+		CLIP_FROM_WORLD = perspective(persp.vfov, persp.aspect, persp.near, persp.far)
+						* mat4_inverse(sc.WORLD_FROM_CAMERA);
+	} else if (camera_mode == CameraMode::User) {
 		CLIP_FROM_WORLD = perspective(
 			free_camera.fov,
 			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect
@@ -1356,8 +1407,20 @@ void Tutorial::update(float dt) {
 			free_camera.target_x, free_camera.target_y, free_camera.target_z,
 			free_camera.azimuth, free_camera.elevation, free_camera.radius
 		);
+	} else if (camera_mode == CameraMode::Debug) {
+		// TODO [Debug camera mode]:
+		//  1. Compute CLIP_FROM_WORLD using the debug_camera's orbit params (same as User mode
+		//     but from the debug_camera struct). This is the matrix used for *rendering*.
+		//  2. Keep a separate mat4 (e.g., culling_CLIP_FROM_WORLD) that holds the CLIP_FROM_WORLD
+		//     of whichever camera was active *before* entering debug mode. Use that for *culling*.
+		//  3. Draw debug visualizations using the lines pipeline:
+		//     a. Draw the frustum of the culling camera as lines (extract the 8 frustum corners
+		//        from the inverse of culling_CLIP_FROM_WORLD and connect them with 12 edges).
+		//     b. Draw axis-aligned bounding boxes (AABBs) for each object instance as lines
+		//        (12 edges per box).
+		assert(0 && "Debug camera mode not yet implemented");
 	} else {
-		assert(0 && "only two camera modes");
+		assert(0 && "unknown camera mode");
 	}
 
 	{	// static sun and sky:
@@ -1679,15 +1742,40 @@ void Tutorial::on_input(InputEvent const &evt) {
 		return;
 	}
 	
-	// general controls:
+	// A1: general controls
 	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_TAB) {
-		// switch camera modes
-		camera_mode = CameraMode((int(camera_mode) + 1) % 2);
+		// cycle camera modes: Scene -> User -> Debug -> Scene -> ...
+		// TODO: when switching INTO Debug mode, snapshot the current CLIP_FROM_WORLD
+		//       into culling_CLIP_FROM_WORLD so culling stays locked to the previous camera.
+		// TODO: when switching OUT OF Debug mode, clear any debug line visualizations.
+		camera_mode = CameraMode((int(camera_mode) + 1) % 3);
 		return;
 	}
 
-	// free camera controls:
-	if (camera_mode == CameraMode::Free) {
+	//  A1: scene camera mode input
+	if (camera_mode == CameraMode::Scene)
+	{
+		//  When camera_mode == Scene, handle a key (e.g., left/right arrow, or a specific key)
+		//  to cycle scene_camera_index through the list of scene cameras.
+		//  No mouse controls — the scene camera transform is fixed by the scene graph.
+		if (evt.type == InputEvent::KeyDown)
+		{
+			if (evt.key.key == GLFW_KEY_RIGHT)
+			{
+				scene_camera_index = (scene_camera_index + 1) % scene_cameras.size();
+			}
+			else if (evt.key.key == GLFW_KEY_LEFT)
+			{
+				scene_camera_index = (scene_camera_index - 1) % scene_cameras.size();
+			}
+		}
+	}
+
+	// User camera controls (also used for Debug camera):
+	if (camera_mode == CameraMode::User || camera_mode == CameraMode::Debug) {
+		// TODO [Debug mode]: when camera_mode == Debug, these controls should modify
+		//  debug_camera instead of free_camera. You could use a reference/pointer:
+		//    OrbitCamera &active_cam = (camera_mode == Debug) ? debug_camera : free_camera;
 		if (evt.type == InputEvent::MouseWheel) {
 			// change distance by 10% every scroll click:
 			free_camera.radius *= std::exp(std::log(1.1f) * -evt.wheel.y);

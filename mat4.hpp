@@ -124,6 +124,54 @@ inline mat4 mat4_inverse_transpose(mat4 const &m) {
     };
 }
 
+// General 4x4 matrix inverse using cofactor expansion.
+// Returns the inverse of m. Behaviour is undefined if m is singular (det == 0).
+// Column-major: element at row r, column c is m[c*4 + r].
+inline mat4 mat4_inverse(mat4 const &m) {
+    // 2x2 sub-determinants from rows 0,1:
+    float s0 = m[0]*m[5]  - m[4]*m[1];
+    float s1 = m[0]*m[9]  - m[8]*m[1];
+    float s2 = m[0]*m[13] - m[12]*m[1];
+    float s3 = m[4]*m[9]  - m[8]*m[5];
+    float s4 = m[4]*m[13] - m[12]*m[5];
+    float s5 = m[8]*m[13] - m[12]*m[9];
+
+    // 2x2 sub-determinants from rows 2,3:
+    float c0 = m[2]*m[7]   - m[6]*m[3];
+    float c1 = m[2]*m[11]  - m[10]*m[3];
+    float c2 = m[2]*m[15]  - m[14]*m[3];
+    float c3 = m[6]*m[11]  - m[10]*m[7];
+    float c4 = m[6]*m[15]  - m[14]*m[7];
+    float c5 = m[10]*m[15] - m[14]*m[11];
+
+    float det = s0*c5 - s1*c4 + s2*c3 + s3*c2 - s4*c1 + s5*c0;
+    float inv_det = 1.0f / det;
+
+    // adjugate / det, stored column-major: result[col*4 + row] = adj[row][col] / det
+    return mat4{
+        // column 0
+        ( m[5]*c5  - m[9]*c4  + m[13]*c3) * inv_det,
+        (-m[1]*c5  + m[9]*c2  - m[13]*c1) * inv_det,
+        ( m[1]*c4  - m[5]*c2  + m[13]*c0) * inv_det,
+        (-m[1]*c3  + m[5]*c1  - m[9]*c0)  * inv_det,
+        // column 1
+        (-m[4]*c5  + m[8]*c4  - m[12]*c3) * inv_det,
+        ( m[0]*c5  - m[8]*c2  + m[12]*c1) * inv_det,
+        (-m[0]*c4  + m[4]*c2  - m[12]*c0) * inv_det,
+        ( m[0]*c3  - m[4]*c1  + m[8]*c0)  * inv_det,
+        // column 2
+        ( m[7]*s5  - m[11]*s4 + m[15]*s3) * inv_det,
+        (-m[3]*s5  + m[11]*s2 - m[15]*s1) * inv_det,
+        ( m[3]*s4  - m[7]*s2  + m[15]*s0) * inv_det,
+        (-m[3]*s3  + m[7]*s1  - m[11]*s0) * inv_det,
+        // column 3
+        (-m[6]*s5  + m[10]*s4 - m[14]*s3) * inv_det,
+        ( m[2]*s5  - m[10]*s2 + m[14]*s1) * inv_det,
+        (-m[2]*s4  + m[6]*s2  - m[14]*s0) * inv_det,
+        ( m[2]*s3  - m[6]*s1  + m[10]*s0) * inv_det,
+    };
+}
+
 // perspective projection matrix
 // - vfov is fov *in radians*
 // - near maps to 0, far maps to 1
