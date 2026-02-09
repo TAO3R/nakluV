@@ -166,6 +166,8 @@ struct Tutorial : RTG::Application {
 	struct SceneMesh {
 		ObjectVertices vertices;		// first & count into scene_vertices buffer
 		S72::Material *material;		// pointer to material (always lambertian per spec)
+		float min_x = INFINITY, min_y = INFINITY, min_z = INFINITY;		// model-sapce aabb
+		float max_x = -INFINITY, max_y = -INFINITY, max_z = -INFINITY;	// model-space aabb
 	};
 	std::unordered_map<std::string,	SceneMesh> scene_meshes;
 
@@ -225,6 +227,7 @@ struct Tutorial : RTG::Application {
 		float far = 1000.0f;	// far clipping plane
 	}	free_camera;	// user camera mode
 	OrbitCamera debug_camera;	// debug camera mode
+	bool is_showing_debug_lines = false;	// turning on and off debug lines for camera frustum and bounding volumes
 
 	// computed from the current camera (as set by camera_mode) during update():
 	mat4 CLIP_FROM_WORLD;

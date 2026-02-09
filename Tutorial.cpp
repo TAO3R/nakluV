@@ -399,6 +399,14 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 					const float* nor = reinterpret_cast<const float*>(vertex_base + nor_off);
 					const float* tex = reinterpret_cast<const float*>(vertex_base + tex_off);
 
+					// setting model-space aabb
+					scene_mesh.min_x = std::min(scene_mesh.min_x, pos[0]);
+					scene_mesh.max_x = std::max(scene_mesh.max_x, pos[0]);
+					scene_mesh.min_y = std::min(scene_mesh.min_y, pos[1]);
+					scene_mesh.max_y = std::max(scene_mesh.max_y, pos[1]);
+					scene_mesh.min_z = std::min(scene_mesh.min_z, pos[2]);
+					scene_mesh.max_z = std::max(scene_mesh.max_z, pos[2]);
+
 					all_vertices.push_back(PosNorTexVertex{
 						.Position{.x = pos[0], .y = pos[1], .z = pos[2]},
 						.Normal  {.x = nor[0], .y = nor[1], .z = nor[2]},
@@ -1792,7 +1800,7 @@ void Tutorial::on_input(InputEvent const &evt) {
 		return;
 	}
 
-	//  A1: scene camera mode input
+	//  A1: handling scene camera inputs
 	if (camera_mode == CameraMode::Scene)
 	{
 		//  When camera_mode == Scene, handle a key (e.g., left/right arrow, or a specific key)
@@ -1809,7 +1817,16 @@ void Tutorial::on_input(InputEvent const &evt) {
 				scene_camera_index = (scene_camera_index + scene_cameras.size() - 1) % uint32_t(scene_cameras.size());
 			}
 		}
-	}
+	}	// end of scene camera inputs handling
+
+	// A1: debug camera debug line toggles
+	if (camera_mode == CameraMode::Debug)
+	{
+		if (evt.type == InputEvent::KeyDown && (evt.button.button == GLFW_KEY_RIGHT || evt.button.button == GLFW_KEY_LEFT))
+		{
+			is_showing_debug_lines = !is_showing_debug_lines;
+		}
+	}	// end of debug camera input handling
 
 	// User camera controls (also used for Debug camera):
 	if (camera_mode == CameraMode::User || camera_mode == CameraMode::Debug) {
