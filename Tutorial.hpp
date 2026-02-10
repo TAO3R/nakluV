@@ -229,6 +229,14 @@ struct Tutorial : RTG::Application {
 	OrbitCamera debug_camera;	// debug camera mode
 	bool is_showing_debug_lines = false;	// turning on and off debug lines for camera frustum and bounding volumes
 
+	// A1: culling
+	float frustum_planes[6][4];	// left, right, buttom, top, near, far
+	enum class BoundingVolumeMode {
+		OBB = 0,
+		AABB = 1,
+	}	bv_mode = BoundingVolumeMode::OBB;
+	bool is_inside_frustum(SceneMesh *mesh);
+
 	// computed from the current camera (as set by camera_mode) during update():
 	mat4 CLIP_FROM_WORLD;
 
@@ -240,6 +248,7 @@ struct Tutorial : RTG::Application {
 		ObjectVertices vertices;
 		ObjectsPipeline::Transform transform;
 		uint32_t texture = 0;	// an index that indicates which texture descriptor to bind when drawing each instance
+		// TODO: a  struct for world space obb data
 	};
 	std::vector<ObjectInstance> object_instances;
 

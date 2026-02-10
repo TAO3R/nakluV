@@ -872,27 +872,22 @@ Tutorial::~Tutorial() {
 // A1
 void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 {
-	//	Compute this node's local transform from its TRS components:
-	// 	local_transform = T * R * S  (scale first, then rotate, then translate)
+	//	node's local transform = T * R * S
 	mat4 local_transform = mat4_translation(node->translation.x, node->translation.y, node->translation.z)
 						 * mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w)
 						 * mat4_scale(node->scale.x, node->scale.y, node->scale.z);
 
-	//	Accumulate with parent: WORLD_FROM_LOCAL = parent_transform * local_transform
+	//	Accumulate with parent transform
 	mat4 WORLD_FROM_LOCAL = parent_transform * local_transform;
 
 	//	If this node has a mesh, emit an ObjectInstance:
-	//  a. Look up the mesh name in scene_meshes to get the ObjectVertices (first/count)
-	//  b. Compute CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL
-	//  c. Compute WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL
-	//     (needed to correctly transform normals when non-uniform scale is present;
-	//      if scale is uniform, WORLD_FROM_LOCAL itself works fine as a shortcut)
-	//  d. Push an ObjectInstance with vertices, transform, and texture index
 	if (node->mesh != nullptr)
 	{
+		// look up the mesh by name
 		auto it = scene_meshes.find(node->mesh->name);
 		if (it == scene_meshes.end()) { return; }
 
+		// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
 		mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
 		object_instances.emplace_back(ObjectInstance{
 			.vertices = it->second.vertices,
@@ -900,7 +895,8 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 				.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
 				.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
 				.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
-			}
+			},
+			// texture
 		});
 	}
 
@@ -937,6 +933,28 @@ void Tutorial::collect_cameras(S72::Node *node, mat4 parent_transform)
 		collect_cameras(child_node, WORLD_FROM_LOCAL);
 	}
 }	// end of collect_cameras
+
+// A1
+bool Tutorial::is_inside_frustum(SceneMesh *mesh)
+{
+	for (uint32_t i = 0; i < 6; i++)
+	{
+		float a = frustum_planes[i][0],
+			  b = frustum_planes[i][1],
+			  c = frustum_planes[i][2],
+			  d = frustum_planes[i][3];
+		if (bv_mode == BoundingVolumeMode::OBB)
+		{
+
+		}
+		else if (bv_mode == BoundingVolumeMode::AABB)
+		{
+
+		}
+	}
+
+	return true;
+}	// end of is_visible_in_frustum
 
 void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 	//[re]create framebuffers:
@@ -1391,74 +1409,104 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		VK(vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, render_params.workspace_available));
 	}
 
-}
+}	// end of render
 
 void Tutorial::update(float dt) {
-	// modify time in every update
-	time = std::fmod(time + dt, 60.0f);
-
-	if (camera_mode == CameraMode::Scene) {
-		//  1. Get the currently-selected scene camera (by scene_camera_index).
-		auto& sc = scene_cameras[scene_camera_index];
-		//  2. Get the camera's S72::Camera::Perspective params (vfov, aspect, near, far).
-		auto& persp = std::get<S72::Camera::Perspective>(sc.camera->projection);
-		//  3. Get the camera node's accumulated world transform from the scene graph.
-		//  4. Invert the world transform to get WORLD_FROM_CAMERA -> CAMERA_FROM_WORLD (view matrix).
-		//  5. CLIP_FROM_WORLD = perspective(...) * CAMERA_FROM_WORLD.
-		CLIP_FROM_WORLD = perspective(
-			persp.vfov,
-			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect of the actual window
-			persp.near,
-			persp.far
-		) * mat4_inverse(sc.WORLD_FROM_CAMERA);
-		//  Note: the user cannot move this camera; they can only cycle to the next one (handled in on_input).
-
-		// placeholder: orbiting camera (replace with scene camera logic)
-		// float ang = float(M_PI) * 2.0f * 10.0f * (time / 60.0f);
-		// CLIP_FROM_WORLD = perspective(
-		// 	60.0f * float(M_PI) /180.0f,	// vfov
-		// 	rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect
-		// 	0.1f,	// near
-		// 	1000.0f	// far
-		// ) * look_at(
-		// 	3.0f * std::cos(ang), 3.0f * std::sin(ang), 1.0f, 	//eye
-		// 	0.0f, 0.0f, 0.5f, 	// target
-		// 	0.0f, 0.0f, 1.0f	// up
-		// );
-	} else if (camera_mode == CameraMode::User) {
-		CLIP_FROM_WORLD = perspective(
-			free_camera.fov,
-			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect
-			free_camera.near,
-			free_camera.far
-		) * orbit(
-			free_camera.target_x, free_camera.target_y, free_camera.target_z,
-			free_camera.azimuth, free_camera.elevation, free_camera.radius
-		);
-	} else if (camera_mode == CameraMode::Debug) {
-		//  1. Compute CLIP_FROM_WORLD using the debug_camera's orbit params (same as User mode
-		//     but from the debug_camera struct). This is the matrix used for *rendering*.
-		//  2. Keep a separate mat4 (e.g., culling_CLIP_FROM_WORLD) that holds the CLIP_FROM_WORLD
-		//     of whichever camera was active *before* entering debug mode. Use that for *culling*.
-		CLIP_FROM_WORLD = perspective(
-			debug_camera.fov,
-			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect
-			debug_camera.near,
-			debug_camera.far
-		) * orbit(
-			debug_camera.target_x, debug_camera.target_y, debug_camera.target_z,
-			debug_camera.azimuth, debug_camera.elevation, debug_camera.radius
-		);
-
-		//  3. Draw debug visualizations using the lines pipeline:
-		//     a. Draw the frustum of the culling camera as lines (extract the 8 frustum corners
-		//        from the inverse of culling_CLIP_FROM_WORLD and connect them with 12 edges).
-		//     b. Draw axis-aligned bounding boxes (AABBs) for each object instance as lines
-		//        (12 edges per box).
-	} else {
-		assert(0 && "unknown camera mode");
+	
+	{	// modify time in every update
+		time = std::fmod(time + dt, 60.0f);
 	}
 
+	{	// handle camera mode
+		if (camera_mode == CameraMode::Scene) {	// SCENE
+			//  current scene camera
+			auto& sc = scene_cameras[scene_camera_index];
+			//  scene camera's S72::Camera::Perspective params
+			auto& persp = std::get<S72::Camera::Perspective>(sc.camera->projection);
+			CLIP_FROM_WORLD = perspective(
+				persp.vfov,
+				rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// window aspect
+				persp.near,
+				persp.far
+			) * mat4_inverse(sc.WORLD_FROM_CAMERA);
+
+			// set culling matrix
+			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
+		} else if (camera_mode == CameraMode::User) {	// USER
+			CLIP_FROM_WORLD = perspective(
+				free_camera.fov,
+				rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// window aspect
+				free_camera.near,
+				free_camera.far
+			) * orbit(
+				free_camera.target_x, free_camera.target_y, free_camera.target_z,
+				free_camera.azimuth, free_camera.elevation, free_camera.radius
+			);
+
+			// set culling matrix
+			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
+		} else if (camera_mode == CameraMode::Debug) {	// DBEUG
+			// clip matrix used for rendering
+			CLIP_FROM_WORLD = perspective(
+				debug_camera.fov,
+				rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect
+				debug_camera.near,
+				debug_camera.far
+			) * orbit(
+				debug_camera.target_x, debug_camera.target_y, debug_camera.target_z,
+				debug_camera.azimuth, debug_camera.elevation, debug_camera.radius
+			);
+
+			// culling uses the previous camera's clip matrix
+
+			//  TODO: Draw debug visualizations (frustum & bounding volumes) using the lines pipeline:
+
+		} else {
+			assert(0 && "unknown camera mode");
+		}
+	}	// end of camera mode handling
+
+	{	// compute frustum planes, clip matrix is column-major
+		// https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
+		
+		// left
+		frustum_planes[0][0] = CULLING_CLIP_FROM_WORLD[ 3] + CULLING_CLIP_FROM_WORLD[ 0];
+		frustum_planes[0][1] = CULLING_CLIP_FROM_WORLD[ 7] + CULLING_CLIP_FROM_WORLD[ 4];
+		frustum_planes[0][2] = CULLING_CLIP_FROM_WORLD[11] + CULLING_CLIP_FROM_WORLD[ 8];
+		frustum_planes[0][3] = CULLING_CLIP_FROM_WORLD[15] + CULLING_CLIP_FROM_WORLD[12];
+
+		// right
+		frustum_planes[1][0] = CULLING_CLIP_FROM_WORLD[ 3] - CULLING_CLIP_FROM_WORLD[ 0];
+		frustum_planes[1][1] = CULLING_CLIP_FROM_WORLD[ 7] - CULLING_CLIP_FROM_WORLD[ 4];
+		frustum_planes[1][2] = CULLING_CLIP_FROM_WORLD[11] - CULLING_CLIP_FROM_WORLD[ 8];
+		frustum_planes[1][3] = CULLING_CLIP_FROM_WORLD[15] - CULLING_CLIP_FROM_WORLD[12];
+
+		// buttom
+		frustum_planes[2][0] = CULLING_CLIP_FROM_WORLD[ 3] + CULLING_CLIP_FROM_WORLD[ 1];
+		frustum_planes[2][1] = CULLING_CLIP_FROM_WORLD[ 7] + CULLING_CLIP_FROM_WORLD[ 5];
+		frustum_planes[2][2] = CULLING_CLIP_FROM_WORLD[11] + CULLING_CLIP_FROM_WORLD[ 9];
+		frustum_planes[2][3] = CULLING_CLIP_FROM_WORLD[15] + CULLING_CLIP_FROM_WORLD[13];
+
+		// top
+		frustum_planes[3][0] = CULLING_CLIP_FROM_WORLD[ 3] - CULLING_CLIP_FROM_WORLD[ 1];
+		frustum_planes[3][1] = CULLING_CLIP_FROM_WORLD[ 7] - CULLING_CLIP_FROM_WORLD[ 5];
+		frustum_planes[3][2] = CULLING_CLIP_FROM_WORLD[11] - CULLING_CLIP_FROM_WORLD[ 9];
+		frustum_planes[3][3] = CULLING_CLIP_FROM_WORLD[15] - CULLING_CLIP_FROM_WORLD[13];
+
+		// near
+		frustum_planes[4][0] = CULLING_CLIP_FROM_WORLD[ 2];
+		frustum_planes[4][1] = CULLING_CLIP_FROM_WORLD[ 6];
+		frustum_planes[4][2] = CULLING_CLIP_FROM_WORLD[10];
+		frustum_planes[4][3] = CULLING_CLIP_FROM_WORLD[14];
+
+		// far
+		frustum_planes[5][0] = CULLING_CLIP_FROM_WORLD[ 3] - CULLING_CLIP_FROM_WORLD[ 2];
+		frustum_planes[5][1] = CULLING_CLIP_FROM_WORLD[ 7] - CULLING_CLIP_FROM_WORLD[ 6];
+		frustum_planes[5][2] = CULLING_CLIP_FROM_WORLD[11] - CULLING_CLIP_FROM_WORLD[10];
+		frustum_planes[5][3] = CULLING_CLIP_FROM_WORLD[15] - CULLING_CLIP_FROM_WORLD[14];
+
+	}	// end of computing frustum planes
+	
 	{	// static sun and sky:
 		world.SKY_DIRECTION.x = 0.0f;
 		world.SKY_DIRECTION.y = 0.0f;
@@ -1768,6 +1816,7 @@ void Tutorial::update(float dt) {
 		}
 
 	}	// end of make some objects
+	
 }	// end of update
 
 
@@ -1778,13 +1827,18 @@ void Tutorial::on_input(InputEvent const &evt) {
 		return;
 	}
 	
-	// A1: general controls
+	// A1: camera mode switches
 	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_TAB) {
 		// cycle camera modes: Scene -> User -> Debug -> Scene -> ...
-		// TODO: when switching INTO Debug mode, snapshot the current CLIP_FROM_WORLD
-		//       into culling_CLIP_FROM_WORLD so culling stays locked to the previous camera.
-		// TODO: when switching OUT OF Debug mode, clear any debug line visualizations.
 		CameraMode next = CameraMode((int(camera_mode) + 1) % 3);
+
+		// TODO: when switching OUT OF Debug mode, clear any debug line visualizations.
+		if (camera_mode == CameraMode::Debug)
+		{
+
+		}
+
+		// culling stays locked to the previous camera when switching to debug camera
 		if (next == CameraMode::Debug)
 		{
 			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
@@ -1800,7 +1854,7 @@ void Tutorial::on_input(InputEvent const &evt) {
 		return;
 	}
 
-	//  A1: handling scene camera inputs
+	//  A1: scene camera inputs
 	if (camera_mode == CameraMode::Scene)
 	{
 		//  When camera_mode == Scene, handle a key (e.g., left/right arrow, or a specific key)
