@@ -243,12 +243,20 @@ struct Tutorial : RTG::Application {
 	std::vector<LinesPipeline::Vertex> lines_vertices;
 
 	ObjectsPipeline::World world;
+	
+	struct WorldBounds {
+		// 8 transformed world-space obb corners
+		float corners[8][3];
+		// world-space aabb
+		float min_x = INFINITY, min_y = INFINITY, min_z = INFINITY;
+		float max_x = -INFINITY, max_y = -INFINITY, max_z = -INFINITY;
+	};
+	std::vector<WorldBounds> object_bounds;
 
 	struct ObjectInstance {
 		ObjectVertices vertices;
 		ObjectsPipeline::Transform transform;
 		uint32_t texture = 0;	// an index that indicates which texture descriptor to bind when drawing each instance
-		// TODO: a  struct for world space obb data
 	};
 	std::vector<ObjectInstance> object_instances;
 

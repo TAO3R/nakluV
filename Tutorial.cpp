@@ -887,6 +887,47 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 		auto it = scene_meshes.find(node->mesh->name);
 		if (it == scene_meshes.end()) { return; }
 
+		// transform the 8 corners by WORLD_FROM_LOCAL to get world space obb
+		WorldBounds bounds;
+		uint8_t index = 0;
+		for (uint8_t iz = 0; iz < 2; iz++)
+		{
+			for (uint8_t iy = 0; iy < 2; iy++)
+			{
+				for (uint8_t ix = 0; ix < 2; ix++)
+				{
+					vec4 local = {
+						ix ? it->second.max_x : it->second.min_x,
+						iy ? it->second.max_y : it->second.min_y,
+						iz ? it->second.max_z : it->second.min_z,
+						1.0
+					};
+
+					// transform
+					vec4 world = WORLD_FROM_LOCAL * local;
+
+					// world space obb
+					bounds.corners[index][0] = world[0];
+					bounds.corners[index][1] = world[1];
+					bounds.corners[index][2] = world[2];
+					
+					// world space aabb
+					bounds.min_x = std::min(bounds.min_x, world[0]);
+					bounds.min_y = std::min(bounds.min_y, world[1]);
+					bounds.min_z = std::min(bounds.min_z, world[2]);
+					bounds.max_x = std::max(bounds.max_x, world[0]);
+					bounds.max_y = std::max(bounds.max_y, world[1]);
+					bounds.max_z = std::max(bounds.max_z, world[2]);
+				}
+			}
+		}
+
+		// TODO: compare against frustum planes
+		if (is_inside_frustum(&it->second))
+		{
+			
+		}
+
 		// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
 		mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
 		object_instances.emplace_back(ObjectInstance{
@@ -898,6 +939,9 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 			},
 			// texture
 		});
+
+		// TODO: push WorldBounds to object_bounds
+
 	}
 
 	//	Recurse into children, passing WORLD_FROM_LOCAL as their parent_transform
@@ -1763,6 +1807,7 @@ void Tutorial::update(float dt) {
 
 	{	// make some objects:
 		object_instances.clear();
+		object_bounds.clear();
 
 		if (scene_vertices.handle != VK_NULL_HANDLE)
 		{	// scene loaded: create instances from scene meshes
