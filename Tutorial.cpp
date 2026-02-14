@@ -444,31 +444,48 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	}	// end of scene mesh construction
 
 	{	// A1: build SecneCamera instances from the scene and set camera (index & mode) if specified
+		
+		// a scene file is specified
 		if (!rtg.configuration.scene_file.empty())
-		{
+		{	
+			// looking for scene cameras
 			for (auto &root : scene_S72.scene.roots)
 			{
 				collect_cameras(root, mat4_identity());
 			}
-		}
-		
-		if (!rtg.configuration.scene_camera.empty())
-		{
-			for (uint32_t i = 0; i < scene_cameras.size(); ++i) {
-				if (scene_cameras[i].camera->name == rtg.configuration.scene_camera) {
-					scene_camera_index = i;
-					break;
+			std::cout << "[Tutorial.cpp]: Collected " << scene_cameras.size() << " scene cameras." << std::endl;
+
+			// a scene camera is specified
+			if (!rtg.configuration.scene_camera.empty())
+			{
+				for (uint32_t i = 0; i < scene_cameras.size(); ++i) {
+					if (scene_cameras[i].camera->name == rtg.configuration.scene_camera) {
+						scene_camera_index = i;
+						break;
+					}
+				}
+
+				if (scene_camera_index == -1)
+				{
+					std::cerr << "[Tutorial.cpp]: Cannot find a scene camera with the specified name." << std::endl;
+					std::exit(1);
+				}
+				else
+				{
+					camera_mode = CameraMode::Scene;
 				}
 			}
-
-			if (scene_camera_index == -1)
+			else	// a scene camera is not specified
 			{
-				std::cerr << "[Tutorial.cpp]: Cannot find a scene camera with the specified name." << std::endl;
-				std::exit(1);
-			}
-			else
-			{
-				camera_mode = CameraMode::Scene;
+				// no scene camera was found
+				if (scene_cameras.size() == 0)
+				{
+					std::cout << "[Tutorial.cpp]: Found no scene camera within the specified scene file." << std::endl;
+				}
+				else	// default to the first scene camera
+				{
+					scene_camera_index = 0;
+				}
 			}
 		}
 	}
@@ -904,20 +921,20 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 					};
 
 					// transform
-					vec4 world = WORLD_FROM_LOCAL * local;
+					vec4 world_trans = WORLD_FROM_LOCAL * local;
 
 					// world space obb
-					bounds.corners[index][0] = world[0];
-					bounds.corners[index][1] = world[1];
-					bounds.corners[index][2] = world[2];
+					bounds.corners[index][0] = world_trans[0];
+					bounds.corners[index][1] = world_trans[1];
+					bounds.corners[index][2] = world_trans[2];
 					
 					// world space aabb
-					bounds.min_x = std::min(bounds.min_x, world[0]);
-					bounds.min_y = std::min(bounds.min_y, world[1]);
-					bounds.min_z = std::min(bounds.min_z, world[2]);
-					bounds.max_x = std::max(bounds.max_x, world[0]);
-					bounds.max_y = std::max(bounds.max_y, world[1]);
-					bounds.max_z = std::max(bounds.max_z, world[2]);
+					bounds.min_x = std::min(bounds.min_x, world_trans[0]);
+					bounds.min_y = std::min(bounds.min_y, world_trans[1]);
+					bounds.min_z = std::min(bounds.min_z, world_trans[2]);
+					bounds.max_x = std::max(bounds.max_x, world_trans[0]);
+					bounds.max_y = std::max(bounds.max_y, world_trans[1]);
+					bounds.max_z = std::max(bounds.max_z, world_trans[2]);
 				}
 			}
 		}
@@ -983,10 +1000,10 @@ bool Tutorial::is_inside_frustum(SceneMesh *mesh)
 {
 	for (uint32_t i = 0; i < 6; i++)
 	{
-		float a = frustum_planes[i][0],
-			  b = frustum_planes[i][1],
-			  c = frustum_planes[i][2],
-			  d = frustum_planes[i][3];
+		// float a = frustum_planes[i][0],
+		// 	  b = frustum_planes[i][1],
+		// 	  c = frustum_planes[i][2],
+		// 	  d = frustum_planes[i][3];
 		if (bv_mode == BoundingVolumeMode::OBB)
 		{
 
@@ -1872,32 +1889,45 @@ void Tutorial::on_input(InputEvent const &evt) {
 		return;
 	}
 	
-	// A1: camera mode switches
+	// A1: camera mode switch
 	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_TAB) {
 		// cycle camera modes: Scene -> User -> Debug -> Scene -> ...
 		CameraMode next = CameraMode((int(camera_mode) + 1) % 3);
+		std::cout << "[Tutorial.cpp]: Trying to switch camera mode to " << int(next) << std::endl;
 
-		// TODO: when switching OUT OF Debug mode, clear any debug line visualizations.
+		// TODO: when switching OUT of Debug mode, clear any debug line visualizations.
 		if (camera_mode == CameraMode::Debug)
 		{
-
+			std::cout << "[Tutorial.cpp]: handling exiting debug camera mode." << std::endl;
 		}
 
 		// culling stays locked to the previous camera when switching to debug camera
 		if (next == CameraMode::Debug)
 		{
+			std::cout << "[Tutorial.cpp]: handling entering debug camera mode" << std::endl;
 			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
 		}
+
+		// actual mode switch
+		std::cout << "[Tutorial.cpp]: switching camera mode to " << int(next) << std::endl;
 		camera_mode = next;
 
-		// skip scene mode if no scene file is loaded or no camera is found in the scene
-		if (camera_mode == CameraMode::Scene && (rtg.configuration.scene_file.empty() || scene_cameras.empty()))
+		if (camera_mode == CameraMode::Scene)
 		{
-			std::cout << "[Tutorial.cpp]: Trying to switch the camera to scene mode while no scene file was loaded or no camera was found. Switching to the next state." << std::endl;
-			camera_mode = CameraMode((int(camera_mode) + 1) % 3);
+			// skip scene mode if no scene file is loaded or no camera is found in the scene
+			if ((rtg.configuration.scene_file.empty() || scene_cameras.empty()))
+			{
+				std::cout << "[Tutorial.cpp]: Trying to switch the camera to scene mode while no scene file was loaded or no camera was found. Switching to the next state." << std::endl;
+				camera_mode = CameraMode((int(camera_mode) + 1) % 3);
+			}
+			else
+			{
+				std::cout << "[Tutorial.cpp]: current scene camera index {" << scene_camera_index << "}" << std::endl;
+			}
 		}
+
 		return;
-	}
+	}	// end of camera mode switch
 
 	//  A1: scene camera inputs
 	if (camera_mode == CameraMode::Scene)
@@ -1915,6 +1945,8 @@ void Tutorial::on_input(InputEvent const &evt) {
 			{
 				scene_camera_index = (scene_camera_index + scene_cameras.size() - 1) % uint32_t(scene_cameras.size());
 			}
+
+			std::cout << "[Tutorial.cpp]: switched to scene camera " << scene_camera_index << std::endl;
 		}
 	}	// end of scene camera inputs handling
 
