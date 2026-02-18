@@ -905,59 +905,28 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 		if (it == scene_meshes.end()) { return; }
 
 		// transform the 8 corners by WORLD_FROM_LOCAL to get world space obb
-		WorldBounds bounds;
-		uint8_t index = 0;
-		for (uint8_t iz = 0; iz < 2; iz++)
+		WorldBounds bounds = get_world_bounds(it->second, WORLD_FROM_LOCAL);
+
+		// compare against frustum planes
+		if (is_inside_frustum(bounds))
 		{
-			for (uint8_t iy = 0; iy < 2; iy++)
-			{
-				for (uint8_t ix = 0; ix < 2; ix++)
-				{
-					vec4 local = {
-						ix ? it->second.max_x : it->second.min_x,
-						iy ? it->second.max_y : it->second.min_y,
-						iz ? it->second.max_z : it->second.min_z,
-						1.0
-					};
+			// push ObjectInstance to object_instances
+			// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
+			mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
+			object_instances.emplace_back(ObjectInstance{
+				.vertices = it->second.vertices,
+				.transform {
+					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+					.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
+				},
+				// texture
 
-					// transform
-					vec4 world_trans = WORLD_FROM_LOCAL * local;
+			});
 
-					// world space obb
-					bounds.corners[index][0] = world_trans[0];
-					bounds.corners[index][1] = world_trans[1];
-					bounds.corners[index][2] = world_trans[2];
-					
-					// world space aabb
-					bounds.min_x = std::min(bounds.min_x, world_trans[0]);
-					bounds.min_y = std::min(bounds.min_y, world_trans[1]);
-					bounds.min_z = std::min(bounds.min_z, world_trans[2]);
-					bounds.max_x = std::max(bounds.max_x, world_trans[0]);
-					bounds.max_y = std::max(bounds.max_y, world_trans[1]);
-					bounds.max_z = std::max(bounds.max_z, world_trans[2]);
-				}
-			}
+			// push WorldBounds to object_bounds
+			object_bounds.push_back(bounds);
 		}
-
-		// TODO: compare against frustum planes
-		if (is_inside_frustum(&it->second))
-		{
-			
-		}
-
-		// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
-		mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
-		object_instances.emplace_back(ObjectInstance{
-			.vertices = it->second.vertices,
-			.transform {
-				.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-				.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-				.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
-			},
-			// texture
-		});
-
-		// TODO: push WorldBounds to object_bounds
 
 	}
 
@@ -995,27 +964,115 @@ void Tutorial::collect_cameras(S72::Node *node, mat4 parent_transform)
 	}
 }	// end of collect_cameras
 
-// A1
-bool Tutorial::is_inside_frustum(SceneMesh *mesh)
+WorldBounds Tutorial::get_world_bounds(SceneMesh const &mesh, mat4 const &world_from_local)
+{
+	WorldBounds bounds;
+	uint8_t index = 0;
+	for (uint8_t iz = 0; iz < 2; iz++)
+	{
+		for (uint8_t iy = 0; iy < 2; iy++)
+		{
+			for (uint8_t ix = 0; ix < 2; ix++)
+			{
+				vec4 local = {
+					ix ? mesh.max_x : mesh.min_x,
+					iy ? mesh.max_y : mesh.min_y,
+					iz ? mesh.max_z : mesh.min_z,
+					1.0f
+				};
+
+				// transform
+				vec4 world_trans = world_from_local * local;
+
+				// world space obb
+				bounds.corners[index][0] = world_trans[0];
+				bounds.corners[index][1] = world_trans[1];
+				bounds.corners[index][2] = world_trans[2];
+				
+				// world space aabb
+				bounds.min_x = std::min(bounds.min_x, world_trans[0]);
+				bounds.min_y = std::min(bounds.min_y, world_trans[1]);
+				bounds.min_z = std::min(bounds.min_z, world_trans[2]);
+				bounds.max_x = std::max(bounds.max_x, world_trans[0]);
+				bounds.max_y = std::max(bounds.max_y, world_trans[1]);
+				bounds.max_z = std::max(bounds.max_z, world_trans[2]);
+
+				++index;
+			}
+		}
+	}
+
+	return bounds;
+}
+
+// A1: returns true if the bounding volume is at least partially inside the frustum
+bool Tutorial::is_inside_frustum(WorldBounds &bounds)
 {
 	for (uint32_t i = 0; i < 6; i++)
 	{
-		// float a = frustum_planes[i][0],
-		// 	  b = frustum_planes[i][1],
-		// 	  c = frustum_planes[i][2],
-		// 	  d = frustum_planes[i][3];
+		float a = frustum_planes[i][0],
+			  b = frustum_planes[i][1],
+			  c = frustum_planes[i][2],
+			  d = frustum_planes[i][3];
+
 		if (bv_mode == BoundingVolumeMode::OBB)
 		{
-
+			// Test all 8 OBB corners against this plane.
+			// If ALL 8 corners are on the outside (negative side),
+			// the entire OBB is outside this plane -> cull.
+			bool all_outside = true;
+			for (uint32_t j = 0; j < 8; j++)
+			{
+				float dist = a * bounds.corners[j][0]
+						   + b * bounds.corners[j][1]
+						   + c * bounds.corners[j][2]
+						   + d;
+				if (dist >= 0.0f) {
+					// at least one corner is inside this plane
+					all_outside = false;
+					break;
+				}
+			}
+			if (all_outside) return false;
 		}
 		else if (bv_mode == BoundingVolumeMode::AABB)
 		{
+			// p-vertex test: pick the corner most in the direction of the plane normal.
+			// If even that corner is outside, the whole box is outside.
+			float px = (a >= 0.0f) ? bounds.max_x : bounds.min_x;
+			float py = (b >= 0.0f) ? bounds.max_y : bounds.min_y;
+			float pz = (c >= 0.0f) ? bounds.max_z : bounds.min_z;
 
+			if (a * px + b * py + c * pz + d < 0.0f) return false;
+		}
+		else
+		{
+			std::cout << "[Tutorial.cpp]: bounding volume with unknown type is presented. Returning from is_inside_frustum" << std::endl;
+			return false;
 		}
 	}
 
 	return true;
-}	// end of is_visible_in_frustum
+
+}	// end of is_inside_frustum
+
+// A1: draws debug camera visualizations
+void Tutorial::draw_bounds(WorldBounds &bounds)
+{
+	if (bv_mode == BoundingVolumeMode::OBB)
+	{
+
+	}
+	else if (bv_mode == BoundingVolumeMode::AABB)
+	{
+		
+	}
+	else
+	{
+		std::cout << "[Tutorial.cpp]: bounding volume with unknown type is presented. Returning from draw_bounds" << std::endl;
+		return;
+	}
+}	// end of draw_bounds
 
 void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 	//[re]create framebuffers:
@@ -1826,17 +1883,17 @@ void Tutorial::update(float dt) {
 		object_instances.clear();
 		object_bounds.clear();
 
+		// scene loaded: create instances from scene meshes
 		if (scene_vertices.handle != VK_NULL_HANDLE)
-		{	// scene loaded: create instances from scene meshes
-			
+		{	
 			// traverse scene graph to compute proper world transforms and push object instances
 			for (auto& root : scene_S72.scene.roots)
 			{
 				traverse_node(root, mat4_identity());
 			}
 		}
-		else
-		{	// no scene: use hardcoded plane and torus
+		else	// no scene: use hardcoded plane and torus
+		{
 			{	// plane translated +x by one unit:
 				mat4 WORLD_FROM_LOCAL {
 					1.0f, 0.0f, 0.0f, 0.0f,
@@ -1855,6 +1912,7 @@ void Tutorial::update(float dt) {
 					.texture = 1,
 				});
 			}	// end of plane translation
+
 			{	// torus translated -x by one unit and rotated CCW around +y:
 				float ang = time / 60.0f * 2.0f * float(M_PI) * 10.0f;
 				float ca = std::cos(ang);
@@ -1881,7 +1939,6 @@ void Tutorial::update(float dt) {
 	
 }	// end of update
 
-
 void Tutorial::on_input(InputEvent const &evt) {
 	// if there ia a current action, it gets input priority:
 	if (action) {
@@ -1899,6 +1956,7 @@ void Tutorial::on_input(InputEvent const &evt) {
 		if (camera_mode == CameraMode::Debug)
 		{
 			std::cout << "[Tutorial.cpp]: handling exiting debug camera mode." << std::endl;
+			
 		}
 
 		// culling stays locked to the previous camera when switching to debug camera

@@ -231,19 +231,6 @@ struct Tutorial : RTG::Application {
 
 	// A1: culling
 	float frustum_planes[6][4];	// left, right, buttom, top, near, far
-	enum class BoundingVolumeMode {
-		OBB = 0,
-		AABB = 1,
-	}	bv_mode = BoundingVolumeMode::OBB;
-	bool is_inside_frustum(SceneMesh *mesh);
-
-	// computed from the current camera (as set by camera_mode) during update():
-	mat4 CLIP_FROM_WORLD;
-
-	std::vector<LinesPipeline::Vertex> lines_vertices;
-
-	ObjectsPipeline::World world;
-	
 	struct WorldBounds {
 		// 8 transformed world-space obb corners
 		float corners[8][3];
@@ -252,6 +239,20 @@ struct Tutorial : RTG::Application {
 		float max_x = -INFINITY, max_y = -INFINITY, max_z = -INFINITY;
 	};
 	std::vector<WorldBounds> object_bounds;
+	enum class BoundingVolumeMode {
+		OBB = 0,
+		AABB = 1,
+	}	bv_mode = BoundingVolumeMode::OBB;
+	WorldBounds get_world_bounds(SceneMesh const &mesh, mat4 const &world_from_local);
+	bool is_inside_frustum(WorldBounds &bounds);
+	void draw_bounds(WorldBounds &bounds);
+
+	// computed from the current camera (as set by camera_mode) during update():
+	mat4 CLIP_FROM_WORLD;
+
+	std::vector<LinesPipeline::Vertex> lines_vertices;
+
+	ObjectsPipeline::World world;
 
 	struct ObjectInstance {
 		ObjectVertices vertices;
