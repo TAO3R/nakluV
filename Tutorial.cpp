@@ -902,32 +902,34 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 	{
 		// look up the mesh by name
 		auto it = scene_meshes.find(node->mesh->name);
-		if (it == scene_meshes.end()) { return; }
-
-		// transform the 8 corners by WORLD_FROM_LOCAL to get world space obb
-		WorldBounds bounds = get_world_bounds(it->second, WORLD_FROM_LOCAL);
-
-		// compare against frustum planes
-		if (is_inside_frustum(bounds))
+		if (it != scene_meshes.end())
 		{
-			// push ObjectInstance to object_instances
-			// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
-			mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = it->second.vertices,
-				.transform {
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
-				},
-				// texture
+			// transform the 8 corners by WORLD_FROM_LOCAL to get world space obb
+			WorldBounds bounds = get_world_bounds(it->second, WORLD_FROM_LOCAL);
 
-			});
+			// compare against frustum planes
+			if (is_inside_frustum(bounds))
+			{
+				// push ObjectInstance to object_instances
+				// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
+				mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
+				object_instances.emplace_back(ObjectInstance{
+					.vertices = it->second.vertices,
+					.transform {
+						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
+					},
+					// TODO: texture
 
-			// push WorldBounds to object_bounds
-			object_bounds.push_back(bounds);
-		}
+				});
 
+				// push WorldBounds to object_bounds
+				object_bounds.push_back(bounds);
+
+				assert(object_instances.size() == object_bounds.size() && "Size mismatch between object instances and bounds.");
+			}
+		}	// end of mesh found in scene_meshes
 	}
 
 	//	Recurse into children, passing WORLD_FROM_LOCAL as their parent_transform
@@ -964,7 +966,7 @@ void Tutorial::collect_cameras(S72::Node *node, mat4 parent_transform)
 	}
 }	// end of collect_cameras
 
-WorldBounds Tutorial::get_world_bounds(SceneMesh const &mesh, mat4 const &world_from_local)
+Tutorial::WorldBounds Tutorial::get_world_bounds(SceneMesh const &mesh, mat4 const &world_from_local)
 {
 	WorldBounds bounds;
 	uint8_t index = 0;
@@ -1008,20 +1010,19 @@ WorldBounds Tutorial::get_world_bounds(SceneMesh const &mesh, mat4 const &world_
 // A1: returns true if the bounding volume is at least partially inside the frustum
 bool Tutorial::is_inside_frustum(WorldBounds &bounds)
 {
-	for (uint32_t i = 0; i < 6; i++)
+	for (uint8_t i = 0; i < 6; i++)
 	{
 		float a = frustum_planes[i][0],
 			  b = frustum_planes[i][1],
 			  c = frustum_planes[i][2],
 			  d = frustum_planes[i][3];
 
+		// test 8 OBB corners against each of the 6 planes
 		if (bv_mode == BoundingVolumeMode::OBB)
 		{
-			// Test all 8 OBB corners against this plane.
-			// If ALL 8 corners are on the outside (negative side),
-			// the entire OBB is outside this plane -> cull.
+			// cull if all 8 corners are outside of this plane
 			bool all_outside = true;
-			for (uint32_t j = 0; j < 8; j++)
+			for (uint8_t j = 0; j < 8; j++)
 			{
 				float dist = a * bounds.corners[j][0]
 						   + b * bounds.corners[j][1]
@@ -1577,8 +1578,6 @@ void Tutorial::update(float dt) {
 
 			// culling uses the previous camera's clip matrix
 
-			//  TODO: Draw debug visualizations (frustum & bounding volumes) using the lines pipeline:
-
 		} else {
 			assert(0 && "unknown camera mode");
 		}
@@ -1688,196 +1687,312 @@ void Tutorial::update(float dt) {
 		// world.SKY_DIRECTION.z = 1.0f;
 	}
 
-	{	// draw a cube with LinesPipeline
+	{	// draw lines
 		lines_vertices.clear();
-		const uint32_t lines_per_axis = 3;
-		constexpr size_t count = (int)lines_per_axis * 2 * 6 + 12;
-		float cube_edge_length = .5f;
-		lines_vertices.reserve(count);
-		
-		// the center of the cube is at (0, 0, .5), 3 axes are bounded by [-1, 1], [-1, 1], [0, 1]
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f
-			},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// a
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f
-			},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// b
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// a
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// c
+		// scene loaded: draw debug visualizations if in debug camera mode
+		if (scene_vertices.handle != VK_NULL_HANDLE)
+		{
+			if (camera_mode == CameraMode::Debug && is_showing_debug_lines)
+			{
+				// vector size reserve
+				size_t count = 12 * 2 + object_bounds.size() * 12 * 2;	// camera frustum + object bounds
+				lines_vertices.reserve(count);
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// c
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// d
+				{	// draw camera frustum: 8 corners from inverse of CULLING_CLIP_FROM_WORLD
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// b
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// d
+					mat4 inv = mat4_inverse(CULLING_CLIP_FROM_WORLD);
+					// the 8 corners of the Normalized Device Coordinates (NDC) cube in clip space (Vulkan: x,y in [-1,1], z in [0,1])
+					float ndc[8][4] = {
+						{-1, -1, 0, 1}, { 1, -1, 0, 1}, {-1,  1, 0, 1}, { 1,  1, 0, 1},  // near
+						{-1, -1, 1, 1}, { 1, -1, 1, 1}, {-1,  1, 1, 1}, { 1,  1, 1, 1},  // far
+					};
+					float fc[8][3]; // frustum corners in world space
+					for (int i = 0; i < 8; ++i) {
+						vec4 clip = {ndc[i][0], ndc[i][1], ndc[i][2], ndc[i][3]};
+						vec4 w = inv * clip;
+						fc[i][0] = w[0] / w[3];
+						fc[i][1] = w[1] / w[3];
+						fc[i][2] = w[2] / w[3];
+					}
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// a
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// e
+					// 12 edges of the frustum (same corner ordering as ndc above)
+					// near face: 0-1, 2-3, 0-2, 1-3
+					// far face:  4-5, 6-7, 4-6, 5-7
+					// connecting: 0-4, 1-5, 2-6, 3-7
+					int edges[12][2] = {
+						{0,1},{2,3},{0,2},{1,3},
+						{4,5},{6,7},{4,6},{5,7},
+						{0,4},{1,5},{2,6},{3,7},
+					};
+					for (int e = 0; e < 12; ++e) {
+						int a = edges[e][0], b = edges[e][1];
+						lines_vertices.emplace_back(PosColVertex{
+							.Position{.x = fc[a][0], .y = fc[a][1], .z = fc[a][2]},
+							.Color{.r = 0xff, .g = 0x00, .b = 0xff, .a = 0xff},	// blue
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position{.x = fc[b][0], .y = fc[b][1], .z = fc[b][2]},
+							.Color{.r = 0xff, .g = 0x00, .b = 0xff, .a = 0xff},	// blue
+						});
+					}
+				}	// end of draw camera frustum
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// e
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// g
+				// draw bounding volumes for each un-culled object
+				for (const WorldBounds &bound : object_bounds)
+				{
+					if (bv_mode == BoundingVolumeMode::OBB)
+					{
+						// 12 edges using the same corner ordering as get_world_bounds:
+						// ix varies fastest: 0=min,1=max
+						// (0,1),(2,3),(4,5),(6,7) - x edges
+						// (0,2),(1,3),(4,6),(5,7) - y edges
+						// (0,4),(1,5),(2,6),(3,7) - z edges
+						int edges[12][2] = {
+							{0,1},{2,3},{4,5},{6,7},
+							{0,2},{1,3},{4,6},{5,7},
+							{0,4},{1,5},{2,6},{3,7},
+						};
+						for (int e = 0; e < 12; ++e) {
+							int a = edges[e][0], b = edges[e][1];
+							lines_vertices.emplace_back(PosColVertex{
+								.Position{.x = bound.corners[a][0], .y = bound.corners[a][1], .z = bound.corners[a][2]},
+								.Color{.r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff},	// red
+							});
+							lines_vertices.emplace_back(PosColVertex{
+								.Position{.x = bound.corners[b][0], .y = bound.corners[b][1], .z = bound.corners[b][2]},
+								.Color{.r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff},	// red
+							});
+						}
+					}	// end of OBB case
+					else if (bv_mode == BoundingVolumeMode::AABB)
+					{
+						// 8 corners of the world-space AABB
+						float c[8][3] = {
+							{bound.min_x, bound.min_y, bound.min_z},
+							{bound.max_x, bound.min_y, bound.min_z},
+							{bound.min_x, bound.max_y, bound.min_z},
+							{bound.max_x, bound.max_y, bound.min_z},
+							{bound.min_x, bound.min_y, bound.max_z},
+							{bound.max_x, bound.min_y, bound.max_z},
+							{bound.min_x, bound.max_y, bound.max_z},
+							{bound.max_x, bound.max_y, bound.max_z},
+						};
+						int edges[12][2] = {
+							{0,1},{2,3},{4,5},{6,7},
+							{0,2},{1,3},{4,6},{5,7},
+							{0,4},{1,5},{2,6},{3,7},
+						};
+						for (int e = 0; e < 12; ++e) {
+							int a = edges[e][0], b = edges[e][1];
+							lines_vertices.emplace_back(PosColVertex{
+								.Position{.x = c[a][0], .y = c[a][1], .z = c[a][2]},
+								.Color{.r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff},	// green
+							});
+							lines_vertices.emplace_back(PosColVertex{
+								.Position{.x = c[b][0], .y = c[b][1], .z = c[b][2]},
+								.Color{.r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff},	// green
+							});
+						}
+					}	// end of AABB case
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// g
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// c
+				}	// end of bounding volume drawing for each un-culled objects
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// g
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// h
+			}	// end of debug camera mode handling
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// h
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// d
+		}	// end of drawing lines when a scene is loaded
+		else	// no scene: draw a cube with LinesPipeline
+		{
+			const uint32_t lines_per_axis = 3;
+			constexpr size_t count = (int)lines_per_axis * 2 * 6 + 12;
+			float cube_edge_length = .5f;
+			lines_vertices.reserve(count);
+			
+			// the center of the cube is at (0, 0, .5), 3 axes are bounded by [-1, 1], [-1, 1], [0, 1]
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f
+				},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// a
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f
+				},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// b
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// e
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// f
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// a
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// c
 
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// b
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// f
-		
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// f
-		lines_vertices.emplace_back(PosColVertex{
-			.Position{
-				.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
-				.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
-			.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
-		});	// h
-	}	// end of cube
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// c
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// d
+
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// b
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// d
+
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// a
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// e
+
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// e
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// g
+
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// g
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// c
+
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// g
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// h
+
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// h
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// d
+
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// e
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// f
+
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f - (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// b
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// f
+			
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = -(cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// f
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{
+					.x = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.y = (cube_edge_length + 0.4f * sinf(time)) / 2.0f,
+					.z = 0.5f + (cube_edge_length + 0.4f * sinf(time)) / 2.0f},
+				.Color{.r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff},
+			});	// h
+		}	// end of cube
+
+	}	// end of draw lines
 
 	{	// make some objects:
 		object_instances.clear();
@@ -2011,9 +2126,10 @@ void Tutorial::on_input(InputEvent const &evt) {
 	// A1: debug camera debug line toggles
 	if (camera_mode == CameraMode::Debug)
 	{
-		if (evt.type == InputEvent::KeyDown && (evt.button.button == GLFW_KEY_RIGHT || evt.button.button == GLFW_KEY_LEFT))
+		if (evt.type == InputEvent::KeyDown && (evt.key.key == GLFW_KEY_RIGHT || evt.key.key == GLFW_KEY_LEFT))
 		{
 			is_showing_debug_lines = !is_showing_debug_lines;
+			std::cout << "[Tutorial.cpp]: is showing debug lines = " << is_showing_debug_lines << std::endl;
 		}
 	}	// end of debug camera input handling
 
