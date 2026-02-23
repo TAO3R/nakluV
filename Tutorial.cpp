@@ -1005,7 +1005,7 @@ Tutorial::WorldBounds Tutorial::get_world_bounds(SceneMesh const &mesh, mat4 con
 	}
 
 	return bounds;
-}
+}	// end of get_world_bounds
 
 // A1: returns true if the bounding volume is at least partially inside the frustum
 bool Tutorial::is_inside_frustum(WorldBounds &bounds)
@@ -1058,16 +1058,62 @@ bool Tutorial::is_inside_frustum(WorldBounds &bounds)
 }	// end of is_inside_frustum
 
 // A1: draws debug camera visualizations
-void Tutorial::draw_bounds(WorldBounds &bounds)
+void Tutorial::draw_bounds(const WorldBounds &bounds)
 {
 	if (bv_mode == BoundingVolumeMode::OBB)
 	{
-
-	}
+		// 12 edges using the same corner ordering as get_world_bounds:
+		// ix varies fastest: 0=min,1=max
+		// (0,1),(2,3),(4,5),(6,7) - x edges
+		// (0,2),(1,3),(4,6),(5,7) - y edges
+		// (0,4),(1,5),(2,6),(3,7) - z edges
+		int edges[12][2] = {
+			{0,1},{2,3},{4,5},{6,7},
+			{0,2},{1,3},{4,6},{5,7},
+			{0,4},{1,5},{2,6},{3,7},
+		};
+		for (int e = 0; e < 12; ++e) {
+			int a = edges[e][0], b = edges[e][1];
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{.x = bounds.corners[a][0], .y = bounds.corners[a][1], .z = bounds.corners[a][2]},
+				.Color{.r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff},	// red
+			});
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{.x = bounds.corners[b][0], .y = bounds.corners[b][1], .z = bounds.corners[b][2]},
+				.Color{.r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff},	// red
+			});
+		}
+	}	// end of OBB case
 	else if (bv_mode == BoundingVolumeMode::AABB)
 	{
-		
-	}
+		// 8 corners of the world-space AABB
+		float c[8][3] = {
+			{bounds.min_x, bounds.min_y, bounds.min_z},
+			{bounds.max_x, bounds.min_y, bounds.min_z},
+			{bounds.min_x, bounds.max_y, bounds.min_z},
+			{bounds.max_x, bounds.max_y, bounds.min_z},
+			{bounds.min_x, bounds.min_y, bounds.max_z},
+			{bounds.max_x, bounds.min_y, bounds.max_z},
+			{bounds.min_x, bounds.max_y, bounds.max_z},
+			{bounds.max_x, bounds.max_y, bounds.max_z},
+		};
+		int edges[12][2] = {
+			{0,1},{2,3},{4,5},{6,7},
+			{0,2},{1,3},{4,6},{5,7},
+			{0,4},{1,5},{2,6},{3,7},
+		};
+		for (int e = 0; e < 12; ++e) {
+			int a = edges[e][0], b = edges[e][1];
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{.x = c[a][0], .y = c[a][1], .z = c[a][2]},
+				.Color{.r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff},	// green
+			});
+			lines_vertices.emplace_back(PosColVertex{
+				.Position{.x = c[b][0], .y = c[b][1], .z = c[b][2]},
+				.Color{.r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff},	// green
+			});
+		}
+	}	// end of AABB case
 	else
 	{
 		std::cout << "[Tutorial.cpp]: bounding volume with unknown type is presented. Returning from draw_bounds" << std::endl;
@@ -1207,22 +1253,22 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				);
 
 				std::cout << "Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
-
-				// host-side (CPU) copy from lines_vertices into workspace.lines_vertices_src:
-				assert(workspace.lines_vertices_src.allocation.mapped);
-				std::memcpy(workspace.lines_vertices_src.allocation.data(), lines_vertices.data(), needed_bytes);
-			
-				// device-side copy from workspace.lines_vertices_src -> workspace.lines_vertices:
-				VkBufferCopy copy_region{
-					.srcOffset = 0,
-					.dstOffset = 0,
-					.size = needed_bytes,
-				};
-				vkCmdCopyBuffer(workspace.command_buffer, workspace.lines_vertices_src.handle, workspace.lines_vertices.handle, 1, &copy_region);
 			}
 
 			assert(workspace.lines_vertices_src.size == workspace.lines_vertices.size);
 			assert(workspace.lines_vertices_src.size >= needed_bytes);
+
+			// host-side (CPU) copy from lines_vertices into workspace.lines_vertices_src:
+			assert(workspace.lines_vertices_src.allocation.mapped);
+			std::memcpy(workspace.lines_vertices_src.allocation.data(), lines_vertices.data(), needed_bytes);
+		
+			// device-side copy from workspace.lines_vertices_src -> workspace.lines_vertices:
+			VkBufferCopy copy_region{
+				.srcOffset = 0,
+				.dstOffset = 0,
+				.size = needed_bytes,
+			};
+			vkCmdCopyBuffer(workspace.command_buffer, workspace.lines_vertices_src.handle, workspace.lines_vertices.handle, 1, &copy_region);
 		}
 
 	}	// end of line buffers resize
@@ -1422,6 +1468,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
 		}
 
+		if (!lines_vertices.empty() && workspace.lines_vertices.handle != VK_NULL_HANDLE)
 		{	// draw with the lines pipeline:
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lines_pipeline.handle);
 
@@ -1739,63 +1786,9 @@ void Tutorial::update(float dt) {
 				}	// end of draw camera frustum
 
 				// draw bounding volumes for each un-culled object
-				for (const WorldBounds &bound : object_bounds)
+				for (const WorldBounds &bounds : object_bounds)
 				{
-					if (bv_mode == BoundingVolumeMode::OBB)
-					{
-						// 12 edges using the same corner ordering as get_world_bounds:
-						// ix varies fastest: 0=min,1=max
-						// (0,1),(2,3),(4,5),(6,7) - x edges
-						// (0,2),(1,3),(4,6),(5,7) - y edges
-						// (0,4),(1,5),(2,6),(3,7) - z edges
-						int edges[12][2] = {
-							{0,1},{2,3},{4,5},{6,7},
-							{0,2},{1,3},{4,6},{5,7},
-							{0,4},{1,5},{2,6},{3,7},
-						};
-						for (int e = 0; e < 12; ++e) {
-							int a = edges[e][0], b = edges[e][1];
-							lines_vertices.emplace_back(PosColVertex{
-								.Position{.x = bound.corners[a][0], .y = bound.corners[a][1], .z = bound.corners[a][2]},
-								.Color{.r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff},	// red
-							});
-							lines_vertices.emplace_back(PosColVertex{
-								.Position{.x = bound.corners[b][0], .y = bound.corners[b][1], .z = bound.corners[b][2]},
-								.Color{.r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff},	// red
-							});
-						}
-					}	// end of OBB case
-					else if (bv_mode == BoundingVolumeMode::AABB)
-					{
-						// 8 corners of the world-space AABB
-						float c[8][3] = {
-							{bound.min_x, bound.min_y, bound.min_z},
-							{bound.max_x, bound.min_y, bound.min_z},
-							{bound.min_x, bound.max_y, bound.min_z},
-							{bound.max_x, bound.max_y, bound.min_z},
-							{bound.min_x, bound.min_y, bound.max_z},
-							{bound.max_x, bound.min_y, bound.max_z},
-							{bound.min_x, bound.max_y, bound.max_z},
-							{bound.max_x, bound.max_y, bound.max_z},
-						};
-						int edges[12][2] = {
-							{0,1},{2,3},{4,5},{6,7},
-							{0,2},{1,3},{4,6},{5,7},
-							{0,4},{1,5},{2,6},{3,7},
-						};
-						for (int e = 0; e < 12; ++e) {
-							int a = edges[e][0], b = edges[e][1];
-							lines_vertices.emplace_back(PosColVertex{
-								.Position{.x = c[a][0], .y = c[a][1], .z = c[a][2]},
-								.Color{.r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff},	// green
-							});
-							lines_vertices.emplace_back(PosColVertex{
-								.Position{.x = c[b][0], .y = c[b][1], .z = c[b][2]},
-								.Color{.r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff},	// green
-							});
-						}
-					}	// end of AABB case
-
+					draw_bounds(bounds);
 				}	// end of bounding volume drawing for each un-culled objects
 
 			}	// end of debug camera mode handling
@@ -2123,17 +2116,34 @@ void Tutorial::on_input(InputEvent const &evt) {
 		}
 	}	// end of scene camera inputs handling
 
-	// A1: debug camera debug line toggles
+	// A1: debug camera inputs
 	if (camera_mode == CameraMode::Debug)
 	{
-		if (evt.type == InputEvent::KeyDown && (evt.key.key == GLFW_KEY_RIGHT || evt.key.key == GLFW_KEY_LEFT))
+		if (evt.type == InputEvent::KeyDown)
 		{
-			is_showing_debug_lines = !is_showing_debug_lines;
-			std::cout << "[Tutorial.cpp]: is showing debug lines = " << is_showing_debug_lines << std::endl;
+			// toggle debug lines
+			if (evt.key.key == GLFW_KEY_SPACE)
+			{
+				is_showing_debug_lines = !is_showing_debug_lines;
+				std::cout << "[Tutorial.cpp]: is showing debug lines = " << is_showing_debug_lines << std::endl;
+			}
+
+			// switch bounding volume modes
+			else if (evt.key.key == GLFW_KEY_RIGHT)
+			{
+				bv_mode = BoundingVolumeMode((int(bv_mode) + 1) % int(BoundingVolumeMode::Count));
+				std::cout << "[Tutorial.cpp]: bounding volume mode switched to " << int(bv_mode) << std::endl;
+			}
+			else if (evt.key.key == GLFW_KEY_LEFT)
+			{
+				bv_mode = BoundingVolumeMode((int(bv_mode) + int(BoundingVolumeMode::Count) - 1) % int(BoundingVolumeMode::Count));
+				std::cout << "[Tutorial.cpp]: bounding volume mode switched to " << int(bv_mode) << std::endl;
+			}
+			return;
 		}
 	}	// end of debug camera input handling
 
-	// User camera controls (also used for Debug camera):
+	// User/Debug camera controls:
 	if (camera_mode == CameraMode::User || camera_mode == CameraMode::Debug) {
 		// select which camera to modify based on current mode:
 		OrbitCamera &active_cam = (camera_mode == CameraMode::User) ? free_camera : debug_camera;
@@ -2225,5 +2235,6 @@ void Tutorial::on_input(InputEvent const &evt) {
 
 			return;
 		}
-	}
+
+	}	// end of user/debug mode camera handling
 }

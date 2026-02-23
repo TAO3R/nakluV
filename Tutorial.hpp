@@ -242,10 +242,11 @@ struct Tutorial : RTG::Application {
 	enum class BoundingVolumeMode {
 		OBB = 0,
 		AABB = 1,
-	}	bv_mode = BoundingVolumeMode::OBB;
+		Count = 2,
+	}	bv_mode = BoundingVolumeMode::AABB;
 	WorldBounds get_world_bounds(SceneMesh const &mesh, mat4 const &world_from_local);
 	bool is_inside_frustum(WorldBounds &bounds);
-	void draw_bounds(WorldBounds &bounds);
+	void draw_bounds(const WorldBounds &bounds);
 
 	// computed from the current camera (as set by camera_mode) during update():
 	mat4 CLIP_FROM_WORLD;
