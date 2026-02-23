@@ -230,6 +230,11 @@ struct Tutorial : RTG::Application {
 	bool is_showing_debug_lines = false;	// turning on and off debug lines for camera frustum and bounding volumes
 
 	// A1: culling
+	enum class CullingMode {
+		None = 0,
+		Frustum = 1,
+		Count = 2,
+	}	culling_mode = CullingMode::None;
 	float frustum_planes[6][4];	// left, right, buttom, top, near, far
 	struct WorldBounds {
 		// 8 transformed world-space obb corners

@@ -60,6 +60,11 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			if (argi + 1 >= argc || scene_file.empty()) throw std::runtime_error("--camera requires a parameter (a scene camera name) and a scene file.");
 			argi += 1;
 			scene_camera = argv[argi];
+		} else if (arg == "--culling") { // select a culling mode
+			std::cout << "\n[RTG.cpp]: Start with a given culling mode." << std::endl;
+			if (argi + 1 >= argc || scene_file.empty()) throw std::runtime_error("--cull requires a parameter (a culling mode name) and a scene file.");
+			argi += 1;
+			culling_mode = argv[argi];
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}
