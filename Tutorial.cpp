@@ -286,7 +286,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	// A1: load .b72 files into memory if the scene is successfully loaded
 	if (scene_S72.scene.name.empty() && scene_S72.scene.roots.empty())
 	{
-		std::cout << "No valid scene loaded." << std::endl;
+		std::cout << "[Tutorial.cpp]: No valid scene loaded." << std::endl;
 	}
 	else
 	{
@@ -489,6 +489,27 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			}
 		}
 	}
+
+	{	// A1: select culling mode if specified
+		if (!rtg.configuration.culling_mode.empty())
+		{
+			if (rtg.configuration.culling_mode == "none")
+			{
+				culling_mode = CullingMode::None;
+			}
+			else if (rtg.configuration.culling_mode == "frustum")
+			{
+				culling_mode = CullingMode::Frustum;
+			}
+			else
+			{
+				std::cerr << "[Tutorial.cpp]: an unknown culling mode is specified, exiting." << std::endl;
+				std::exit(1);
+			}
+		}
+
+		std::cout << "[Tutorial.cpp]: using culling mode: " << int(culling_mode) << std::endl;
+	}	// end of culling mode selection
 
 	{	// create object vertices
 		std::vector<PosNorTexVertex> vertices;
@@ -902,13 +923,9 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 	{
 		// look up the mesh by name
 		auto it = scene_meshes.find(node->mesh->name);
-		if (it != scene_meshes.end())
-		{
-			// transform the 8 corners by WORLD_FROM_LOCAL to get world space obb
-			WorldBounds bounds = get_world_bounds(it->second, WORLD_FROM_LOCAL);
-
-			// compare against frustum planes
-			if (is_inside_frustum(bounds))
+		if (it != scene_meshes.end())	// found a mesh
+		{	
+			if (culling_mode == CullingMode::None)
 			{
 				// push ObjectInstance to object_instances
 				// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
@@ -921,13 +938,41 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 						.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
 					},
 					// TODO: texture
-
+					
 				});
+			}
+			else if (culling_mode == CullingMode::Frustum)
+			{
+				// transform the 8 corners by WORLD_FROM_LOCAL to get world space obb
+				WorldBounds bounds = get_world_bounds(it->second, WORLD_FROM_LOCAL);
 
-				// push WorldBounds to object_bounds
-				object_bounds.push_back(bounds);
+				// compare against frustum planes
+				if (is_inside_frustum(bounds))
+				{
+					// push ObjectInstance to object_instances
+					// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
+					mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
+					object_instances.emplace_back(ObjectInstance{
+						.vertices = it->second.vertices,
+						.transform {
+							.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+							.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+							.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
+						},
+						// TODO: texture
 
-				assert(object_instances.size() == object_bounds.size() && "Size mismatch between object instances and bounds.");
+					});
+
+					// push WorldBounds to object_bounds
+					object_bounds.push_back(bounds);
+
+					assert(object_instances.size() == object_bounds.size() && "Size mismatch between object instances and bounds.");
+				}
+			}
+			else
+			{
+				std::cerr << "[Tutorial.cpp]: traversing the scene graph with unknown culling mode, exiting." << std::endl;
+				std::exit(1);
 			}
 		}	// end of mesh found in scene_meshes
 	}
@@ -1220,45 +1265,45 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		VK(vkBeginCommandBuffer(workspace.command_buffer, &begin_info));
 	}
 
-	// resize line buffers if needed
-	{
-		if (!lines_vertices.empty()){ // upload lines vertices:
-			// [re-]allocate lines buffers if needed
-			size_t needed_bytes = lines_vertices.size() * sizeof(lines_vertices[0]);
-			if (workspace.lines_vertices_src.handle == VK_NULL_HANDLE || workspace.lines_vertices_src.size < needed_bytes) {
-				// round to the next multiupole of 4k to avoid re-allocating continuously if vertex count grows slowly:
-				size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
-				
-				// clean up code for the buffers if they are already allocated
-				if (workspace.lines_vertices_src.handle) {
-					rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices_src));
-				}
+	if (!lines_vertices.empty()) { // upload lines vertices:
 
-				if (workspace.lines_vertices.handle) {
-					rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices));
-				}
-
-				// actual allocation
-				workspace.lines_vertices_src = rtg.helpers.create_buffer(	// CPU visible staging buffer
-					new_bytes,
-					VK_BUFFER_USAGE_TRANSFER_SRC_BIT,	// going to have GPU copy from this memory
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,	// host-visible memory, coherent (no special sync needed)
-					Helpers::Mapped	// get a pointer to the memory
-				);
-				workspace.lines_vertices = rtg.helpers.create_buffer(	// GPU-local vertex buffer
-					new_bytes,
-					VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,	// going to use as vertex buffer, also going to have GPU into this memory
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,	// GPU-local memory
-					Helpers::Unmapped	// don't get a pointer to the memory
-				);
-
-				std::cout << "Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
+		// [re-]allocate lines buffers if needed
+		size_t needed_bytes = lines_vertices.size() * sizeof(lines_vertices[0]);
+		if (workspace.lines_vertices_src.handle == VK_NULL_HANDLE || workspace.lines_vertices_src.size < needed_bytes) {
+			// round to the next multiupole of 4k to avoid re-allocating continuously if vertex count grows slowly:
+			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+			
+			// clean up code for the buffers if they are already allocated
+			if (workspace.lines_vertices_src.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices_src));
 			}
 
-			assert(workspace.lines_vertices_src.size == workspace.lines_vertices.size);
-			assert(workspace.lines_vertices_src.size >= needed_bytes);
+			if (workspace.lines_vertices.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices));
+			}
 
-			// host-side (CPU) copy from lines_vertices into workspace.lines_vertices_src:
+			// actual allocation
+			workspace.lines_vertices_src = rtg.helpers.create_buffer(	// CPU visible staging buffer
+				new_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,	// going to have GPU copy from this memory
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,	// host-visible memory, coherent (no special sync needed)
+				Helpers::Mapped	// get a pointer to the memory
+			);
+			workspace.lines_vertices = rtg.helpers.create_buffer(	// GPU-local vertex buffer
+				new_bytes,
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,	// going to use as vertex buffer, also going to have GPU into this memory
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,	// GPU-local memory
+				Helpers::Unmapped	// don't get a pointer to the memory
+			);
+
+			std::cout << "Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
+
+		}	// end of resize
+
+		assert(workspace.lines_vertices_src.size == workspace.lines_vertices.size);
+		assert(workspace.lines_vertices_src.size >= needed_bytes);
+
+		{	// host-side (CPU) copy from lines_vertices into workspace.lines_vertices_src:
 			assert(workspace.lines_vertices_src.allocation.mapped);
 			std::memcpy(workspace.lines_vertices_src.allocation.data(), lines_vertices.data(), needed_bytes);
 		
@@ -1271,7 +1316,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdCopyBuffer(workspace.command_buffer, workspace.lines_vertices_src.handle, workspace.lines_vertices.handle, 1, &copy_region);
 		}
 
-	}	// end of line buffers resize
+	}	// end of lines vertices upload
 
 	{	// upload camera info:
 		LinesPipeline::Camera camera {
