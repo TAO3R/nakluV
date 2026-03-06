@@ -9,8 +9,7 @@
       "cppStandard": "c++20",
       "defines": [
         "_USE_MATH_DEFINES",
-        "VK_USE_PLATFORM_WIN32_KHR",
-        "NOMINMAX"
+        "VK_USE_PLATFORM_WIN32_KHR"
       ],
       "includePath": [
         "${workspaceFolder}",

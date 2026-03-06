@@ -50,21 +50,21 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			std::cout << "\n[RTG.cpp]: Looking for .s72 files." << std::endl;
 			if (argi + 1 >= argc) throw std::runtime_error("--scene requires a parameter (a .s72 file name).");
 			argi += 1;
-			scene_viewer_config.scene_file = argv[argi];
+			scene_file = argv[argi];
 		} else if (arg == "--print") {	// print the loaded scene info
 			std::cout << "\n[RTG.cpp]: Trying to print scene info." << std::endl;
-			if (scene_viewer_config.scene_file.empty()) throw std::runtime_error("--print requires a scene file.");
-			scene_viewer_config.print_scene = true;
+			if (scene_file.empty()) throw std::runtime_error("--print requires a scene file.");
+			print_scene = true;
 		} else if (arg == "--camera") {	// select a scene camera
 			std::cout << "\n[RTG.cpp]: Looking for the scene camera." << std::endl;
-			if (argi + 1 >= argc || scene_viewer_config.scene_file.empty()) throw std::runtime_error("--camera requires a parameter (a scene camera name) and a scene file.");
+			if (argi + 1 >= argc || scene_file.empty()) throw std::runtime_error("--camera requires a parameter (a scene camera name) and a scene file.");
 			argi += 1;
-			scene_viewer_config.scene_camera = argv[argi];
+			scene_camera = argv[argi];
 		} else if (arg == "--culling") { // select a culling mode
 			std::cout << "\n[RTG.cpp]: Start with a given culling mode." << std::endl;
-			if (argi + 1 >= argc || scene_viewer_config.scene_file.empty()) throw std::runtime_error("--cull requires a parameter (a culling mode name) and a scene file.");
+			if (argi + 1 >= argc || scene_file.empty()) throw std::runtime_error("--cull requires a parameter (a culling mode name) and a scene file.");
 			argi += 1;
-			scene_viewer_config.culling_mode = argv[argi];
+			culling_mode = argv[argi];
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}

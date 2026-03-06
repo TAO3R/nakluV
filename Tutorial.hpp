@@ -8,14 +8,6 @@
 #include "RTG.hpp"
 
 #include "S72.hpp"
-#include "SceneViewer/SceneViewer.hpp"
-
-#ifdef near
-#undef near
-#endif
-#ifdef far
-#undef far
-#endif
 
 struct Tutorial : RTG::Application {
 
@@ -161,7 +153,29 @@ struct Tutorial : RTG::Application {
 	VkSampler texture_sampler = VK_NULL_HANDLE;	// gives the sampler state (wrapping, interpolation, etc) for reading from the textures
 	VkDescriptorPool texture_descriptor_pool = VK_NULL_HANDLE;	// the pool from which we allocate texture descriptor sets
 	std::vector<VkDescriptorSet> texture_descriptors;	// allocated from texture_descriptor_pool
+
+	// A1
+	S72 scene_S72;
+	// .b72 binary files: src -> raw bytes
+	std::unordered_map<std::string, std::vector<uint8_t>> loaded_data;
 	
+	// Per-mesh GPU data, simplified per A1 spec:
+	//  - no indices (all TRIANGLE_LIST, non-indexed)
+	//  - fixed 48-byte interleaved layout: POSITION(12) + NORMAL(12) + TANGENT(16) + TEXCOORD(8)
+	//  - lambertian-only materials
+	struct SceneMesh {
+		ObjectVertices vertices;		// first & count into scene_vertices buffer
+		S72::Material *material;		// pointer to material (always lambertian per spec)
+		float min_x = INFINITY, min_y = INFINITY, min_z = INFINITY;		// model-sapce aabb
+		float max_x = -INFINITY, max_y = -INFINITY, max_z = -INFINITY;	// model-space aabb
+	};
+	std::unordered_map<std::string,	SceneMesh> scene_meshes;
+
+	// combined vertex buffer for all scene meshes
+	Helpers::AllocatedBuffer scene_vertices;
+	// recursively travere through the scene graph and pushes `ObjectInstance`s and `SceneCamera`s into `object_instances` and `scene_cameras`
+	void traverse_node(S72::Node *node, mat4 parent_transform);
+
 	//--------------------------------------------------------------------
 	//Resources that change when the swapchain is resized:
 
@@ -184,6 +198,23 @@ struct Tutorial : RTG::Application {
 
 	float time = 0.0f;
 
+	// A1: for selecting between cameras:
+	enum class CameraMode {
+		Scene = 0,	// renders through a scene camera; user cannot move it, but can cycle between scene cameras
+		User  = 1,	// renders through a user-controlled orbit camera (keyboard+mouse)
+		Debug = 2,	// renders through a second user-controlled camera; culling uses the *previously active* camera
+	} camera_mode = CameraMode::User;
+
+	// A1: struct for scene camera mode:
+	struct SceneCamera {
+		S72::Camera *camera;
+		mat4 WORLD_FROM_CAMERA;
+	};
+	std::vector<SceneCamera> scene_cameras;
+	int scene_camera_index = -1;
+	mat4 CULLING_CLIP_FROM_WORLD;	// recording culling matrix when entering debug camera mode
+	void collect_cameras(S72::Node *node, mat4 parent_transform);
+
 	// A1: used when camera_mode == CameraMode::User (or Debug):
 	struct OrbitCamera {
 		float target_x = 0.0f, target_y = 0.0f, target_z = 0.0f;	// where the camera is looking + orbiting
@@ -195,6 +226,32 @@ struct Tutorial : RTG::Application {
 		float near = 0.1f;	// near clipping plane
 		float far = 1000.0f;	// far clipping plane
 	}	free_camera;	// user camera mode
+	OrbitCamera debug_camera;	// debug camera mode
+	bool is_showing_debug_lines = false;	// turning on and off debug lines for camera frustum and bounding volumes
+
+	// A1: culling
+	enum class CullingMode {
+		None = 0,
+		Frustum = 1,
+		Count = 2,
+	}	culling_mode = CullingMode::None;
+	float frustum_planes[6][4];	// left, right, buttom, top, near, far
+	struct WorldBounds {
+		// 8 transformed world-space obb corners
+		float corners[8][3];
+		// world-space aabb
+		float min_x = INFINITY, min_y = INFINITY, min_z = INFINITY;
+		float max_x = -INFINITY, max_y = -INFINITY, max_z = -INFINITY;
+	};
+	std::vector<WorldBounds> object_bounds;
+	enum class BoundingVolumeMode {
+		OBB = 0,
+		AABB = 1,
+		Count = 2,
+	}	bv_mode = BoundingVolumeMode::AABB;
+	WorldBounds get_world_bounds(SceneMesh const &mesh, mat4 const &world_from_local);
+	bool is_inside_frustum(WorldBounds &bounds);
+	void draw_bounds(const WorldBounds &bounds);
 
 	// computed from the current camera (as set by camera_mode) during update():
 	mat4 CLIP_FROM_WORLD;
@@ -214,7 +271,4 @@ struct Tutorial : RTG::Application {
 	//Rendering function, uses all the resources above to queue work to draw a frame:
 
 	virtual void render(RTG &, RTG::RenderParams const &) override;
-
-	// A1： Scene Viewer
-	SceneViewer scene_viewer;
 };

@@ -35,7 +35,6 @@ const main_objs = [
 	maek.CPP('PosNorTexVertex.cpp'),
 	maek.CPP('RTG.cpp'),
 	maek.CPP('Helpers.cpp'),
-	maek.CPP('SceneViewer/SceneViewer.cpp'),	// A1
 	maek.CPP('main.cpp'),
 ];
 
@@ -98,7 +97,6 @@ function custom_flags_and_rules() {
 
 		maek.options.CPPFlags = [
 			'-O2',
-			'-I.',
 			`-I${VULKAN_SDK}/include`,
 			`-I${GLFW_DIR}/include`
 		];
@@ -125,7 +123,6 @@ function custom_flags_and_rules() {
 			'/wd4100', //unused formal parameter
 			'/wd4201', //nameless struct/union
 			'/wd4146', //-1U is unsigned
-			'/I.',
 			`/I${VULKAN_SDK}/Include`,
 			`/I../glfw-3.4.bin.WIN64/include`,
 		];
@@ -150,7 +147,6 @@ function custom_flags_and_rules() {
 
 		maek.options.CPPFlags = [
 			'-O2',
-			'-I.',
 			`-I${VULKAN_SDK}/include`,
 			`-I/opt/homebrew/include`, //for brew-installed GLFW
 			`-I../glfw-3.4.bin.MACOS/include`, //for release from github

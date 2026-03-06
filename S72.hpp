@@ -13,13 +13,6 @@
 #include <variant>
 #include <vector>
 
-#ifdef near
-#undef near
-#endif
-#ifdef far
-#undef far
-#endif
-
 /*
  * Represents a scene in s72 format.
  * Specification: https://github.com/15-472/s72
