@@ -2,6 +2,7 @@
 
 #include "Helpers.hpp"
 #include "InputEvent.hpp"
+#include "SceneViewer/SceneViewer.hpp"
 
 #include <vulkan/vulkan_core.h>
 
@@ -83,11 +84,8 @@ struct RTG {
 		static void usage(std::function< void(const char *, const char *) > const &callback); //reports command line usage by passing flag and description to callback.
 
 		// A1
-		std::string scene_file = "";	// --scene
-		bool print_scene = false;		// --print
-		std::string scene_camera = "";	// --camera
-		std::string culling_mode = "";	// --cull
-	};	
+		SVConfig scene_viewer_config;
+	};
 
 	Configuration configuration; //configuration, as used (might have extra extensions, layers, or flags added)
 

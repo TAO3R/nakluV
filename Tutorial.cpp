@@ -15,8 +15,7 @@
 #include <filesystem>
 
 // Constructor
-Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
-	// refsol::Tutorial_constructor(rtg, &depth_format, &render_pass, &command_pool);
+Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_), scene_viewer(*this) {
 	// select a depth format:
 	// (at least one of these two must be supported, according to the spec; but neither are required)
 	depth_format = rtg.helpers.find_image_format(
@@ -269,247 +268,40 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	}	// end of the for-loop for per-workspace descriptor set allocation
 
 	// A1: scene load and info print if specified
-	if (!rtg.configuration.scene_file.empty())
+	if (!rtg.configuration.scene_viewer_config.scene_file.empty())
 	{
-		try {
-			scene_S72 = S72::load(rtg.configuration.scene_file.data());
-			if (rtg.configuration.print_scene)
-			{
-				print_info(scene_S72);
-				print_scene_graph(scene_S72);
-			}
-		} catch (std::exception &e) {
-			std::cerr << "Failed to load s72-format scene from " << rtg.configuration.scene_file << "\n" << e.what() << std::endl;
-		}
+		scene_viewer.load_scene();
 	}	// end of scene load and info print
 
 	// A1: load .b72 files into memory if the scene is successfully loaded
-	if (scene_S72.scene.name.empty() && scene_S72.scene.roots.empty())
+	if (scene_viewer.scene_S72.scene.name.empty() && scene_viewer.scene_S72.scene.roots.empty())
 	{
 		std::cout << "[Tutorial.cpp]: No valid scene loaded." << std::endl;
 	}
 	else
 	{
-		std::cout << "\n[Tutorial.cpp]: loading .b72 binary files into memory." << std::endl;
-		// iterate through all data files referenced by the scene
-		for (auto& [src_name, data_file] : scene_S72.data_files)	// <std::string, DataFile>
-		{
-			// Open file in binary mode, positioned at end
-			std::ifstream file(data_file.path, std::ios::binary | std::ios::ate);
-			
-			// Get file size (we're at end due to ios::ate)
-			size_t size = file.tellg();
-			
-			// Rewind to beginning
-			file.seekg(0, std::ios::beg);
-			
-			// Allocate buffer and read all bytes
-			std::vector<uint8_t> bytes(size);
-			file.read(reinterpret_cast<char*>(bytes.data()), size);
-			
-			// Store in map
-			loaded_data[src_name] = std::move(bytes);
-		}
-
-		// === DEBUG: Print loaded binary file info ===
-		std::cout << "--- Loaded Binary Data Files ---" << std::endl;
-		std::cout << "Total files loaded: " << loaded_data.size() << std::endl;
-
-		size_t total_bytes = 0;
-		for (auto& [src_name, bytes] : loaded_data) {
-			std::cout << "  " << src_name << ": " << bytes.size() << " bytes" << std::endl;
-			total_bytes += bytes.size();
-		}
-
-		std::cout << "Total bytes loaded: " << total_bytes;
-		if (total_bytes > 1024 * 1024) {
-			std::cout << " (" << (total_bytes / (1024.0 * 1024.0)) << " MB)";
-		} else if (total_bytes > 1024) {
-			std::cout << " (" << (total_bytes / 1024.0) << " KB)";
-		}
-		std::cout << std::endl;
-		std::cout << "--------------------------------" << std::endl;
+		scene_viewer.load_scene_binaries();
 
 	}	// end of loading .b72 files
 
-	{	// A1: construct scene meshes from loaded binary files and upload to the GPU
-		// Per A1 spec:
-		//  - No indices (non-indexed TRIANGLE_LIST only)
-		//  - All attributes interleaved at stride 48:
-		//      POSITION  offset  0  R32G32B32_SFLOAT    (12 bytes)
-		//      NORMAL    offset 12  R32G32B32_SFLOAT    (12 bytes)
-		//      TANGENT   offset 24  R32G32B32A32_SFLOAT (16 bytes, skipped for now)
-		//      TEXCOORD  offset 40  R32G32_SFLOAT       ( 8 bytes)
-		//  - Materials are always lambertian
-
-		if (!loaded_data.empty())
-		{
-			std::vector<PosNorTexVertex> all_vertices;
-
-			for (auto& [mesh_name, mesh] : scene_S72.meshes)
-			{
-				SceneMesh scene_mesh;
-				scene_mesh.material = mesh.material;
-				scene_mesh.vertices.first = uint32_t(all_vertices.size());
-
-				// attribute
-				auto pos_it = mesh.attributes.find("POSITION");
-				auto nor_it = mesh.attributes.find("NORMAL");
-				auto tex_it = mesh.attributes.find("TEXCOORD");
-
-				if (pos_it == mesh.attributes.end()) {
-					std::cerr << "[Tutorial.cpp]: Mesh '" << mesh_name << "' missing POSITION attribute, skipping.\n";
-					continue;
-				}
-
-				auto& pos_attr = pos_it->second;
-
-				// All attributes should reference the same src file with stride 48 per spec.
-				// We use POSITION's src as the base buffer.
-				auto data_it = loaded_data.find(pos_attr.src.src);
-				if (data_it == loaded_data.end()) {
-					std::cerr << "[Tutorial.cpp]: Mesh '" << mesh_name << "' references data file '" << pos_attr.src.src << "' which was not loaded, skipping.\n";
-					continue;
-				}
-				const uint8_t* base_data = data_it->second.data();
-				const size_t   base_size = data_it->second.size();
-
-				// Expected offsets within each 48-byte vertex stride:
-				const uint32_t stride   = pos_attr.stride;  // should be 48
-				const uint32_t pos_off  = pos_attr.offset;  // should be 0
-				const uint32_t nor_off  = (nor_it != mesh.attributes.end()) ? nor_it->second.offset : 12;
-				const uint32_t tex_off  = (tex_it != mesh.attributes.end()) ? tex_it->second.offset : 40;
-
-				// Non-indexed: mesh.count is the vertex count directly
-				const uint32_t vertex_count = mesh.count;
-
-				// Bounds check
-				if (pos_off + vertex_count * stride > base_size) {
-					std::cerr << "[Tutorial.cpp]: Mesh '" << mesh_name << "' attribute data exceeds buffer size, skipping.\n";
-					continue;
-				}
-
-				// Extract vertices, skipping TANGENT (we don't need it for now)
-				all_vertices.reserve(all_vertices.size() + vertex_count);
-				for (uint32_t i = 0; i < vertex_count; ++i)
-				{
-					const uint8_t* vertex_base = base_data + i * stride;
-
-					const float* pos = reinterpret_cast<const float*>(vertex_base + pos_off);
-					const float* nor = reinterpret_cast<const float*>(vertex_base + nor_off);
-					const float* tex = reinterpret_cast<const float*>(vertex_base + tex_off);
-
-					// setting model-space aabb
-					scene_mesh.min_x = std::min(scene_mesh.min_x, pos[0]);
-					scene_mesh.max_x = std::max(scene_mesh.max_x, pos[0]);
-					scene_mesh.min_y = std::min(scene_mesh.min_y, pos[1]);
-					scene_mesh.max_y = std::max(scene_mesh.max_y, pos[1]);
-					scene_mesh.min_z = std::min(scene_mesh.min_z, pos[2]);
-					scene_mesh.max_z = std::max(scene_mesh.max_z, pos[2]);
-
-					all_vertices.push_back(PosNorTexVertex{
-						.Position{.x = pos[0], .y = pos[1], .z = pos[2]},
-						.Normal  {.x = nor[0], .y = nor[1], .z = nor[2]},
-						.TexCoord{.s = tex[0], .t = tex[1]},
-					});
-				}
-
-				scene_mesh.vertices.count = vertex_count;
-				scene_meshes[mesh_name] = scene_mesh;
-
-				std::cout << "[Tutorial.cpp]: Loaded mesh '" << mesh_name << "': " << vertex_count
-				          << " vertices (" << vertex_count / 3 << " triangles)" << std::endl;
-			}	// end of the for-loop for scene mesh traversal
-
-			// upload to the GPU
-			if (!all_vertices.empty())
-			{
-				size_t bytes = all_vertices.size() * sizeof(PosNorTexVertex);
-				scene_vertices = rtg.helpers.create_buffer(
-					bytes,
-					VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-					Helpers::Unmapped
-				);
-				rtg.helpers.transfer_to_buffer(all_vertices.data(), bytes, scene_vertices);
-
-				std::cout << "[Tutorial.cpp]: Uploaded " << all_vertices.size() << " scene vertices ("
-				          << bytes << " bytes) to GPU." << std::endl;
-			}
-		}
-		else
-		{
-			std::cout << "[Tutorial.cpp]: no binary data loaded when trying to construct scene meshes." << std::endl;
-		}
-	}	// end of scene mesh construction
-
-	{	// A1: build SecneCamera instances from the scene and set camera (index & mode) if specified
-		
-		// a scene file is specified
-		if (!rtg.configuration.scene_file.empty())
-		{	
-			// looking for scene cameras
-			for (auto &root : scene_S72.scene.roots)
-			{
-				collect_cameras(root, mat4_identity());
-			}
-			std::cout << "[Tutorial.cpp]: Collected " << scene_cameras.size() << " scene cameras." << std::endl;
-
-			// a scene camera is specified
-			if (!rtg.configuration.scene_camera.empty())
-			{
-				for (uint32_t i = 0; i < scene_cameras.size(); ++i) {
-					if (scene_cameras[i].camera->name == rtg.configuration.scene_camera) {
-						scene_camera_index = i;
-						break;
-					}
-				}
-
-				if (scene_camera_index == -1)
-				{
-					std::cerr << "[Tutorial.cpp]: Cannot find a scene camera with the specified name." << std::endl;
-					std::exit(1);
-				}
-				else
-				{
-					camera_mode = CameraMode::Scene;
-				}
-			}
-			else	// a scene camera is not specified
-			{
-				// no scene camera was found
-				if (scene_cameras.size() == 0)
-				{
-					std::cout << "[Tutorial.cpp]: Found no scene camera within the specified scene file." << std::endl;
-				}
-				else	// default to the first scene camera
-				{
-					scene_camera_index = 0;
-				}
-			}
-		}
+	// A1: construct scene meshes from loaded binary files and upload to the GPU
+	if (!scene_viewer.loaded_data.empty())
+	{
+		scene_viewer.build_scene_meshes();
+	}
+	else
+	{
+		std::cout << "[Tutorial.cpp]: no binary data loaded when trying to construct scene meshes." << std::endl;
 	}
 
-	{	// A1: select culling mode if specified
-		if (!rtg.configuration.culling_mode.empty())
-		{
-			if (rtg.configuration.culling_mode == "none")
-			{
-				culling_mode = CullingMode::None;
-			}
-			else if (rtg.configuration.culling_mode == "frustum")
-			{
-				culling_mode = CullingMode::Frustum;
-			}
-			else
-			{
-				std::cerr << "[Tutorial.cpp]: an unknown culling mode is specified, exiting." << std::endl;
-				std::exit(1);
-			}
-		}
+	// A1: build SecneCamera instances from the scene and set camera (index & mode) if specified
+	if (!rtg.configuration.scene_viewer_config.scene_file.empty())
+	{	
+		scene_viewer.initialize_scene_cameras();
+	}
 
-		std::cout << "[Tutorial.cpp]: using culling mode: " << int(culling_mode) << std::endl;
-	}	// end of culling mode selection
+	// A1: culling mode initialization
+	scene_viewer.initialize_cull_mode();
 
 	{	// create object vertices
 		std::vector<PosNorTexVertex> vertices;
@@ -618,7 +410,8 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 		// copy data to buffer:
 		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
-	}
+
+	}	// end of create object vertices
 
 	{ 	// make some textures
 		textures.reserve(2);
@@ -833,9 +626,9 @@ Tutorial::~Tutorial() {
 	rtg.helpers.destroy_buffer(std::move(object_vertices));
 
 	// A1: scene data cleanup
-	if (scene_vertices.handle != VK_NULL_HANDLE)
+	if (scene_viewer.scene_vertices.handle != VK_NULL_HANDLE)
 	{
-		rtg.helpers.destroy_buffer(std::move(scene_vertices));
+		rtg.helpers.destroy_buffer(std::move(scene_viewer.scene_vertices));
 	}
 
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE) {
@@ -894,7 +687,6 @@ Tutorial::~Tutorial() {
 	lines_pipeline.destroy(rtg);
 	objects_pipeline.destroy(rtg);
 
-	// refsol::Tutorial_destructor(rtg, &render_pass, &command_pool);
 	// destroy command pool
 	if (command_pool != VK_NULL_HANDLE) {
 		vkDestroyCommandPool(rtg.device, command_pool, nullptr);
@@ -906,265 +698,6 @@ Tutorial::~Tutorial() {
 		render_pass = VK_NULL_HANDLE;
 	}
 }
-
-// A1
-void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
-{
-	//	node's local transform = T * R * S
-	mat4 local_transform = mat4_translation(node->translation.x, node->translation.y, node->translation.z)
-						 * mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w)
-						 * mat4_scale(node->scale.x, node->scale.y, node->scale.z);
-
-	//	Accumulate with parent transform
-	mat4 WORLD_FROM_LOCAL = parent_transform * local_transform;
-
-	//	If this node has a mesh, emit an ObjectInstance:
-	if (node->mesh != nullptr)
-	{
-		// look up the mesh by name
-		auto it = scene_meshes.find(node->mesh->name);
-		if (it != scene_meshes.end())	// found a mesh
-		{	
-			if (culling_mode == CullingMode::None)
-			{
-				// push ObjectInstance to object_instances
-				// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
-				mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
-				object_instances.emplace_back(ObjectInstance{
-					.vertices = it->second.vertices,
-					.transform {
-						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-						.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-						.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
-					},
-					// TODO: texture
-					
-				});
-			}
-			else if (culling_mode == CullingMode::Frustum)
-			{
-				// transform the 8 corners by WORLD_FROM_LOCAL to get world space obb
-				WorldBounds bounds = get_world_bounds(it->second, WORLD_FROM_LOCAL);
-
-				// compare against frustum planes
-				if (is_inside_frustum(bounds))
-				{
-					// push ObjectInstance to object_instances
-					// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
-					mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
-					object_instances.emplace_back(ObjectInstance{
-						.vertices = it->second.vertices,
-						.transform {
-							.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-							.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-							.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
-						},
-						// TODO: texture
-
-					});
-
-					// push WorldBounds to object_bounds
-					object_bounds.push_back(bounds);
-
-					assert(object_instances.size() == object_bounds.size() && "Size mismatch between object instances and bounds.");
-				}
-			}
-			else
-			{
-				std::cerr << "[Tutorial.cpp]: traversing the scene graph with unknown culling mode, exiting." << std::endl;
-				std::exit(1);
-			}
-		}	// end of mesh found in scene_meshes
-	}
-
-	//	Recurse into children, passing WORLD_FROM_LOCAL as their parent_transform
-	for (auto& child_node : node->children)
-	{
-		traverse_node(child_node, WORLD_FROM_LOCAL);
-	}
-
-}	// end of traverse_node
-
-// A1
-void Tutorial::collect_cameras(S72::Node *node, mat4 parent_transform)
-{
-	mat4 local_transform = mat4_translation(node->translation.x, node->translation.y, node->translation.z)
-						 * mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w)
-						 * mat4_scale(node->scale.x, node->scale.y, node->scale.z);
-
-	mat4 WORLD_FROM_LOCAL = parent_transform * local_transform;
-	
-	//	If this node has a camera, emit a SceneCamera:
-	if (node->camera != nullptr)
-	{
-		scene_cameras.emplace_back(
-			SceneCamera{
-				.camera = node->camera,
-				.WORLD_FROM_CAMERA = WORLD_FROM_LOCAL,
-			});
-		std::cout << "[Tutorial.cpp]: Emplacing camera: {" << node->camera->name << "} into scene_cameras." << std::endl;
-	}
-
-	for (auto &child_node : node->children)
-	{
-		collect_cameras(child_node, WORLD_FROM_LOCAL);
-	}
-}	// end of collect_cameras
-
-Tutorial::WorldBounds Tutorial::get_world_bounds(SceneMesh const &mesh, mat4 const &world_from_local)
-{
-	WorldBounds bounds;
-	uint8_t index = 0;
-	for (uint8_t iz = 0; iz < 2; iz++)
-	{
-		for (uint8_t iy = 0; iy < 2; iy++)
-		{
-			for (uint8_t ix = 0; ix < 2; ix++)
-			{
-				vec4 local = {
-					ix ? mesh.max_x : mesh.min_x,
-					iy ? mesh.max_y : mesh.min_y,
-					iz ? mesh.max_z : mesh.min_z,
-					1.0f
-				};
-
-				// transform
-				vec4 world_trans = world_from_local * local;
-
-				// world space obb
-				bounds.corners[index][0] = world_trans[0];
-				bounds.corners[index][1] = world_trans[1];
-				bounds.corners[index][2] = world_trans[2];
-				
-				// world space aabb
-				bounds.min_x = std::min(bounds.min_x, world_trans[0]);
-				bounds.min_y = std::min(bounds.min_y, world_trans[1]);
-				bounds.min_z = std::min(bounds.min_z, world_trans[2]);
-				bounds.max_x = std::max(bounds.max_x, world_trans[0]);
-				bounds.max_y = std::max(bounds.max_y, world_trans[1]);
-				bounds.max_z = std::max(bounds.max_z, world_trans[2]);
-
-				++index;
-			}
-		}
-	}
-
-	return bounds;
-}	// end of get_world_bounds
-
-// A1: returns true if the bounding volume is at least partially inside the frustum
-bool Tutorial::is_inside_frustum(WorldBounds &bounds)
-{
-	for (uint8_t i = 0; i < 6; i++)
-	{
-		float a = frustum_planes[i][0],
-			  b = frustum_planes[i][1],
-			  c = frustum_planes[i][2],
-			  d = frustum_planes[i][3];
-
-		// test 8 OBB corners against each of the 6 planes
-		if (bv_mode == BoundingVolumeMode::OBB)
-		{
-			// cull if all 8 corners are outside of this plane
-			bool all_outside = true;
-			for (uint8_t j = 0; j < 8; j++)
-			{
-				float dist = a * bounds.corners[j][0]
-						   + b * bounds.corners[j][1]
-						   + c * bounds.corners[j][2]
-						   + d;
-				if (dist >= 0.0f) {
-					// at least one corner is inside this plane
-					all_outside = false;
-					break;
-				}
-			}
-			if (all_outside) return false;
-		}
-		else if (bv_mode == BoundingVolumeMode::AABB)
-		{
-			// p-vertex test: pick the corner most in the direction of the plane normal.
-			// If even that corner is outside, the whole box is outside.
-			float px = (a >= 0.0f) ? bounds.max_x : bounds.min_x;
-			float py = (b >= 0.0f) ? bounds.max_y : bounds.min_y;
-			float pz = (c >= 0.0f) ? bounds.max_z : bounds.min_z;
-
-			if (a * px + b * py + c * pz + d < 0.0f) return false;
-		}
-		else
-		{
-			std::cout << "[Tutorial.cpp]: bounding volume with unknown type is presented. Returning from is_inside_frustum" << std::endl;
-			return false;
-		}
-	}
-
-	return true;
-
-}	// end of is_inside_frustum
-
-// A1: draws debug camera visualizations
-void Tutorial::draw_bounds(const WorldBounds &bounds)
-{
-	if (bv_mode == BoundingVolumeMode::OBB)
-	{
-		// 12 edges using the same corner ordering as get_world_bounds:
-		// ix varies fastest: 0=min,1=max
-		// (0,1),(2,3),(4,5),(6,7) - x edges
-		// (0,2),(1,3),(4,6),(5,7) - y edges
-		// (0,4),(1,5),(2,6),(3,7) - z edges
-		int edges[12][2] = {
-			{0,1},{2,3},{4,5},{6,7},
-			{0,2},{1,3},{4,6},{5,7},
-			{0,4},{1,5},{2,6},{3,7},
-		};
-		for (int e = 0; e < 12; ++e) {
-			int a = edges[e][0], b = edges[e][1];
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = bounds.corners[a][0], .y = bounds.corners[a][1], .z = bounds.corners[a][2]},
-				.Color{.r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff},	// red
-			});
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = bounds.corners[b][0], .y = bounds.corners[b][1], .z = bounds.corners[b][2]},
-				.Color{.r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff},	// red
-			});
-		}
-	}	// end of OBB case
-	else if (bv_mode == BoundingVolumeMode::AABB)
-	{
-		// 8 corners of the world-space AABB
-		float c[8][3] = {
-			{bounds.min_x, bounds.min_y, bounds.min_z},
-			{bounds.max_x, bounds.min_y, bounds.min_z},
-			{bounds.min_x, bounds.max_y, bounds.min_z},
-			{bounds.max_x, bounds.max_y, bounds.min_z},
-			{bounds.min_x, bounds.min_y, bounds.max_z},
-			{bounds.max_x, bounds.min_y, bounds.max_z},
-			{bounds.min_x, bounds.max_y, bounds.max_z},
-			{bounds.max_x, bounds.max_y, bounds.max_z},
-		};
-		int edges[12][2] = {
-			{0,1},{2,3},{4,5},{6,7},
-			{0,2},{1,3},{4,6},{5,7},
-			{0,4},{1,5},{2,6},{3,7},
-		};
-		for (int e = 0; e < 12; ++e) {
-			int a = edges[e][0], b = edges[e][1];
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = c[a][0], .y = c[a][1], .z = c[a][2]},
-				.Color{.r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff},	// green
-			});
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = c[b][0], .y = c[b][1], .z = c[b][2]},
-				.Color{.r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff},	// green
-			});
-		}
-	}	// end of AABB case
-	else
-	{
-		std::cout << "[Tutorial.cpp]: bounding volume with unknown type is presented. Returning from draw_bounds" << std::endl;
-		return;
-	}
-}	// end of draw_bounds
 
 void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 	//[re]create framebuffers:
@@ -1547,7 +1080,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 			{	// A1: bind the appropriate vertex buffer:
 				// if a scene was loaded, use scene_vertices; otherwise use the hardcoded object_vertices
-				VkBuffer vb = (scene_vertices.handle != VK_NULL_HANDLE) ? scene_vertices.handle : object_vertices.handle;
+				VkBuffer vb = (scene_viewer.scene_vertices.handle != VK_NULL_HANDLE) ? scene_viewer.scene_vertices.handle : object_vertices.handle;
 				std::array<VkBuffer, 1> vertex_buffers{vb};
 				std::array<VkDeviceSize, 1> offsets{0};
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
@@ -1629,9 +1162,9 @@ void Tutorial::update(float dt) {
 	}
 
 	{	// handle camera mode
-		if (camera_mode == CameraMode::Scene) {	// SCENE
+		if (scene_viewer.camera_mode == SceneViewer::CameraMode::Scene) {	// SCENE
 			//  current scene camera
-			auto& sc = scene_cameras[scene_camera_index];
+			auto& sc = scene_viewer.scene_cameras[scene_viewer.scene_camera_index];
 			//  scene camera's S72::Camera::Perspective params
 			auto& persp = std::get<S72::Camera::Perspective>(sc.camera->projection);
 			CLIP_FROM_WORLD = perspective(
@@ -1642,8 +1175,8 @@ void Tutorial::update(float dt) {
 			) * mat4_inverse(sc.WORLD_FROM_CAMERA);
 
 			// set culling matrix
-			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
-		} else if (camera_mode == CameraMode::User) {	// USER
+			scene_viewer.CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
+		} else if (scene_viewer.camera_mode == SceneViewer::CameraMode::User) {	// USER
 			CLIP_FROM_WORLD = perspective(
 				free_camera.fov,
 				rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// window aspect
@@ -1655,17 +1188,17 @@ void Tutorial::update(float dt) {
 			);
 
 			// set culling matrix
-			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
-		} else if (camera_mode == CameraMode::Debug) {	// DBEUG
+			scene_viewer.CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
+		} else if (scene_viewer.camera_mode == SceneViewer::CameraMode::Debug) {	// DBEUG
 			// clip matrix used for rendering
 			CLIP_FROM_WORLD = perspective(
-				debug_camera.fov,
+				scene_viewer.debug_camera.fov,
 				rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect
-				debug_camera.near,
-				debug_camera.far
+				scene_viewer.debug_camera.near,
+				scene_viewer.debug_camera.far
 			) * orbit(
-				debug_camera.target_x, debug_camera.target_y, debug_camera.target_z,
-				debug_camera.azimuth, debug_camera.elevation, debug_camera.radius
+				scene_viewer.debug_camera.target_x, scene_viewer.debug_camera.target_y, scene_viewer.debug_camera.target_z,
+				scene_viewer.debug_camera.azimuth, scene_viewer.debug_camera.elevation, scene_viewer.debug_camera.radius
 			);
 
 			// culling uses the previous camera's clip matrix
@@ -1675,46 +1208,8 @@ void Tutorial::update(float dt) {
 		}
 	}	// end of camera mode handling
 
-	{	// compute frustum planes, clip matrix is column-major
-		// https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
-		
-		// left
-		frustum_planes[0][0] = CULLING_CLIP_FROM_WORLD[ 3] + CULLING_CLIP_FROM_WORLD[ 0];
-		frustum_planes[0][1] = CULLING_CLIP_FROM_WORLD[ 7] + CULLING_CLIP_FROM_WORLD[ 4];
-		frustum_planes[0][2] = CULLING_CLIP_FROM_WORLD[11] + CULLING_CLIP_FROM_WORLD[ 8];
-		frustum_planes[0][3] = CULLING_CLIP_FROM_WORLD[15] + CULLING_CLIP_FROM_WORLD[12];
-
-		// right
-		frustum_planes[1][0] = CULLING_CLIP_FROM_WORLD[ 3] - CULLING_CLIP_FROM_WORLD[ 0];
-		frustum_planes[1][1] = CULLING_CLIP_FROM_WORLD[ 7] - CULLING_CLIP_FROM_WORLD[ 4];
-		frustum_planes[1][2] = CULLING_CLIP_FROM_WORLD[11] - CULLING_CLIP_FROM_WORLD[ 8];
-		frustum_planes[1][3] = CULLING_CLIP_FROM_WORLD[15] - CULLING_CLIP_FROM_WORLD[12];
-
-		// buttom
-		frustum_planes[2][0] = CULLING_CLIP_FROM_WORLD[ 3] + CULLING_CLIP_FROM_WORLD[ 1];
-		frustum_planes[2][1] = CULLING_CLIP_FROM_WORLD[ 7] + CULLING_CLIP_FROM_WORLD[ 5];
-		frustum_planes[2][2] = CULLING_CLIP_FROM_WORLD[11] + CULLING_CLIP_FROM_WORLD[ 9];
-		frustum_planes[2][3] = CULLING_CLIP_FROM_WORLD[15] + CULLING_CLIP_FROM_WORLD[13];
-
-		// top
-		frustum_planes[3][0] = CULLING_CLIP_FROM_WORLD[ 3] - CULLING_CLIP_FROM_WORLD[ 1];
-		frustum_planes[3][1] = CULLING_CLIP_FROM_WORLD[ 7] - CULLING_CLIP_FROM_WORLD[ 5];
-		frustum_planes[3][2] = CULLING_CLIP_FROM_WORLD[11] - CULLING_CLIP_FROM_WORLD[ 9];
-		frustum_planes[3][3] = CULLING_CLIP_FROM_WORLD[15] - CULLING_CLIP_FROM_WORLD[13];
-
-		// near
-		frustum_planes[4][0] = CULLING_CLIP_FROM_WORLD[ 2];
-		frustum_planes[4][1] = CULLING_CLIP_FROM_WORLD[ 6];
-		frustum_planes[4][2] = CULLING_CLIP_FROM_WORLD[10];
-		frustum_planes[4][3] = CULLING_CLIP_FROM_WORLD[14];
-
-		// far
-		frustum_planes[5][0] = CULLING_CLIP_FROM_WORLD[ 3] - CULLING_CLIP_FROM_WORLD[ 2];
-		frustum_planes[5][1] = CULLING_CLIP_FROM_WORLD[ 7] - CULLING_CLIP_FROM_WORLD[ 6];
-		frustum_planes[5][2] = CULLING_CLIP_FROM_WORLD[11] - CULLING_CLIP_FROM_WORLD[10];
-		frustum_planes[5][3] = CULLING_CLIP_FROM_WORLD[15] - CULLING_CLIP_FROM_WORLD[14];
-
-	}	// end of computing frustum planes
+	// A1
+	scene_viewer.compute_frustum_planes();
 	
 	{	// static sun and sky:
 		world.SKY_DIRECTION.x = 0.0f;
@@ -1783,57 +1278,21 @@ void Tutorial::update(float dt) {
 		lines_vertices.clear();
 
 		// scene loaded: draw debug visualizations if in debug camera mode
-		if (scene_vertices.handle != VK_NULL_HANDLE)
+		if (scene_viewer.scene_vertices.handle != VK_NULL_HANDLE)
 		{
-			if (camera_mode == CameraMode::Debug && is_showing_debug_lines)
+			if (scene_viewer.camera_mode == SceneViewer::CameraMode::Debug && scene_viewer.is_showing_debug_lines)
 			{
 				// vector size reserve
-				size_t count = 12 * 2 + object_bounds.size() * 12 * 2;	// camera frustum + object bounds
+				size_t count = 12 * 2 + scene_viewer.object_bounds.size() * 12 * 2;	// camera frustum + object bounds
 				lines_vertices.reserve(count);
 
-				{	// draw camera frustum: 8 corners from inverse of CULLING_CLIP_FROM_WORLD
-
-					mat4 inv = mat4_inverse(CULLING_CLIP_FROM_WORLD);
-					// the 8 corners of the Normalized Device Coordinates (NDC) cube in clip space (Vulkan: x,y in [-1,1], z in [0,1])
-					float ndc[8][4] = {
-						{-1, -1, 0, 1}, { 1, -1, 0, 1}, {-1,  1, 0, 1}, { 1,  1, 0, 1},  // near
-						{-1, -1, 1, 1}, { 1, -1, 1, 1}, {-1,  1, 1, 1}, { 1,  1, 1, 1},  // far
-					};
-					float fc[8][3]; // frustum corners in world space
-					for (int i = 0; i < 8; ++i) {
-						vec4 clip = {ndc[i][0], ndc[i][1], ndc[i][2], ndc[i][3]};
-						vec4 w = inv * clip;
-						fc[i][0] = w[0] / w[3];
-						fc[i][1] = w[1] / w[3];
-						fc[i][2] = w[2] / w[3];
-					}
-
-					// 12 edges of the frustum (same corner ordering as ndc above)
-					// near face: 0-1, 2-3, 0-2, 1-3
-					// far face:  4-5, 6-7, 4-6, 5-7
-					// connecting: 0-4, 1-5, 2-6, 3-7
-					int edges[12][2] = {
-						{0,1},{2,3},{0,2},{1,3},
-						{4,5},{6,7},{4,6},{5,7},
-						{0,4},{1,5},{2,6},{3,7},
-					};
-					for (int e = 0; e < 12; ++e) {
-						int a = edges[e][0], b = edges[e][1];
-						lines_vertices.emplace_back(PosColVertex{
-							.Position{.x = fc[a][0], .y = fc[a][1], .z = fc[a][2]},
-							.Color{.r = 0xff, .g = 0x00, .b = 0xff, .a = 0xff},	// blue
-						});
-						lines_vertices.emplace_back(PosColVertex{
-							.Position{.x = fc[b][0], .y = fc[b][1], .z = fc[b][2]},
-							.Color{.r = 0xff, .g = 0x00, .b = 0xff, .a = 0xff},	// blue
-						});
-					}
-				}	// end of draw camera frustum
+				// A1
+				scene_viewer.draw_camera_frustum();
 
 				// draw bounding volumes for each un-culled object
-				for (const WorldBounds &bounds : object_bounds)
+				for (const SceneViewer::WorldBounds &bounds : scene_viewer.object_bounds)
 				{
-					draw_bounds(bounds);
+					scene_viewer.draw_bounds(bounds);
 				}	// end of bounding volume drawing for each un-culled objects
 
 			}	// end of debug camera mode handling
@@ -2034,15 +1493,15 @@ void Tutorial::update(float dt) {
 
 	{	// make some objects:
 		object_instances.clear();
-		object_bounds.clear();
+		scene_viewer.object_bounds.clear();
 
 		// scene loaded: create instances from scene meshes
-		if (scene_vertices.handle != VK_NULL_HANDLE)
+		if (scene_viewer.scene_vertices.handle != VK_NULL_HANDLE)
 		{	
 			// traverse scene graph to compute proper world transforms and push object instances
-			for (auto& root : scene_S72.scene.roots)
+			for (auto& root : scene_viewer.scene_S72.scene.roots)
 			{
-				traverse_node(root, mat4_identity());
+				scene_viewer.traverse_node(root, mat4_identity());
 			}
 		}
 		else	// no scene: use hardcoded plane and torus
@@ -2102,38 +1561,37 @@ void Tutorial::on_input(InputEvent const &evt) {
 	// A1: camera mode switch
 	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_TAB) {
 		// cycle camera modes: Scene -> User -> Debug -> Scene -> ...
-		CameraMode next = CameraMode((int(camera_mode) + 1) % 3);
+		SceneViewer::CameraMode next = SceneViewer::CameraMode((int(scene_viewer.camera_mode) + 1) % 3);
 		std::cout << "[Tutorial.cpp]: Trying to switch camera mode to " << int(next) << std::endl;
 
 		// TODO: when switching OUT of Debug mode, clear any debug line visualizations.
-		if (camera_mode == CameraMode::Debug)
+		if (scene_viewer.camera_mode == SceneViewer::CameraMode::Debug)
 		{
 			std::cout << "[Tutorial.cpp]: handling exiting debug camera mode." << std::endl;
-			
 		}
 
 		// culling stays locked to the previous camera when switching to debug camera
-		if (next == CameraMode::Debug)
+		if (next == SceneViewer::CameraMode::Debug)
 		{
 			std::cout << "[Tutorial.cpp]: handling entering debug camera mode" << std::endl;
-			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
+			scene_viewer.CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
 		}
 
 		// actual mode switch
 		std::cout << "[Tutorial.cpp]: switching camera mode to " << int(next) << std::endl;
-		camera_mode = next;
+		scene_viewer.camera_mode = next;
 
-		if (camera_mode == CameraMode::Scene)
+		if (scene_viewer.camera_mode == SceneViewer::CameraMode::Scene)
 		{
 			// skip scene mode if no scene file is loaded or no camera is found in the scene
-			if ((rtg.configuration.scene_file.empty() || scene_cameras.empty()))
+			if ((rtg.configuration.scene_viewer_config.scene_file.empty() || scene_viewer.scene_cameras.empty()))
 			{
 				std::cout << "[Tutorial.cpp]: Trying to switch the camera to scene mode while no scene file was loaded or no camera was found. Switching to the next state." << std::endl;
-				camera_mode = CameraMode((int(camera_mode) + 1) % 3);
+				scene_viewer.camera_mode = SceneViewer::CameraMode((int(scene_viewer.camera_mode) + 1) % 3);
 			}
 			else
 			{
-				std::cout << "[Tutorial.cpp]: current scene camera index {" << scene_camera_index << "}" << std::endl;
+				std::cout << "[Tutorial.cpp]: current scene camera index {" << scene_viewer.scene_camera_index << "}" << std::endl;
 			}
 		}
 
@@ -2141,7 +1599,7 @@ void Tutorial::on_input(InputEvent const &evt) {
 	}	// end of camera mode switch
 
 	//  A1: scene camera inputs
-	if (camera_mode == CameraMode::Scene)
+	if (scene_viewer.camera_mode == SceneViewer::CameraMode::Scene)
 	{
 		//  When camera_mode == Scene, handle a key (e.g., left/right arrow, or a specific key)
 		//  to cycle scene_camera_index through the list of scene cameras.
@@ -2150,48 +1608,48 @@ void Tutorial::on_input(InputEvent const &evt) {
 		{
 			if (evt.key.key == GLFW_KEY_RIGHT)
 			{
-				scene_camera_index = (scene_camera_index + 1) % uint32_t(scene_cameras.size());
+				scene_viewer.scene_camera_index = (scene_viewer.scene_camera_index + 1) % uint32_t(scene_viewer.scene_cameras.size());
 			}
 			else if (evt.key.key == GLFW_KEY_LEFT)
 			{
-				scene_camera_index = (scene_camera_index + scene_cameras.size() - 1) % uint32_t(scene_cameras.size());
+				scene_viewer.scene_camera_index = (scene_viewer.scene_camera_index + scene_viewer.scene_cameras.size() - 1) % uint32_t(scene_viewer.scene_cameras.size());
 			}
 
-			std::cout << "[Tutorial.cpp]: switched to scene camera " << scene_camera_index << std::endl;
+			std::cout << "[Tutorial.cpp]: switched to scene camera " << scene_viewer.scene_camera_index << std::endl;
 		}
 	}	// end of scene camera inputs handling
 
 	// A1: debug camera inputs
-	if (camera_mode == CameraMode::Debug)
+	if (scene_viewer.camera_mode == SceneViewer::CameraMode::Debug)
 	{
 		if (evt.type == InputEvent::KeyDown)
 		{
 			// toggle debug lines
 			if (evt.key.key == GLFW_KEY_SPACE)
 			{
-				is_showing_debug_lines = !is_showing_debug_lines;
-				std::cout << "[Tutorial.cpp]: is showing debug lines = " << is_showing_debug_lines << std::endl;
+				scene_viewer.is_showing_debug_lines = !scene_viewer.is_showing_debug_lines;
+				std::cout << "[Tutorial.cpp]: is showing debug lines = " << scene_viewer.is_showing_debug_lines << std::endl;
 			}
 
 			// switch bounding volume modes
 			else if (evt.key.key == GLFW_KEY_RIGHT)
 			{
-				bv_mode = BoundingVolumeMode((int(bv_mode) + 1) % int(BoundingVolumeMode::Count));
-				std::cout << "[Tutorial.cpp]: bounding volume mode switched to " << int(bv_mode) << std::endl;
+				scene_viewer.bv_mode = SceneViewer::BoundingVolumeMode((int(scene_viewer.bv_mode) + 1) % int(SceneViewer::BoundingVolumeMode::Count));
+				std::cout << "[Tutorial.cpp]: bounding volume mode switched to " << int(scene_viewer.bv_mode) << std::endl;
 			}
 			else if (evt.key.key == GLFW_KEY_LEFT)
 			{
-				bv_mode = BoundingVolumeMode((int(bv_mode) + int(BoundingVolumeMode::Count) - 1) % int(BoundingVolumeMode::Count));
-				std::cout << "[Tutorial.cpp]: bounding volume mode switched to " << int(bv_mode) << std::endl;
+				scene_viewer.bv_mode = SceneViewer::BoundingVolumeMode((int(scene_viewer.bv_mode) + int(SceneViewer::BoundingVolumeMode::Count) - 1) % int(SceneViewer::BoundingVolumeMode::Count));
+				std::cout << "[Tutorial.cpp]: bounding volume mode switched to " << int(scene_viewer.bv_mode) << std::endl;
 			}
 			return;
 		}
 	}	// end of debug camera input handling
 
 	// User/Debug camera controls:
-	if (camera_mode == CameraMode::User || camera_mode == CameraMode::Debug) {
+	if (scene_viewer.camera_mode == SceneViewer::CameraMode::User || scene_viewer.camera_mode == SceneViewer::CameraMode::Debug) {
 		// select which camera to modify based on current mode:
-		OrbitCamera &active_cam = (camera_mode == CameraMode::User) ? free_camera : debug_camera;
+		OrbitCamera &active_cam = (scene_viewer.camera_mode == SceneViewer::CameraMode::User) ? free_camera : scene_viewer.debug_camera;
 		
 		if (evt.type == InputEvent::MouseWheel) {
 			// change distance by 10% every scroll click:
@@ -2209,10 +1667,10 @@ void Tutorial::on_input(InputEvent const &evt) {
 			OrbitCamera init_camera = active_cam;
 			// capture which camera mode we're in so the lambda modifies the right camera,
 			// even if the mode changes while dragging:
-			CameraMode captured_mode = camera_mode;
+			SceneViewer::CameraMode captured_mode = scene_viewer.camera_mode;
 
 			action = [this, init_x, init_y, init_camera, captured_mode] (InputEvent const &evt) {
-				OrbitCamera &cam = (captured_mode == CameraMode::User) ? free_camera : debug_camera;
+				OrbitCamera &cam = (captured_mode == SceneViewer::CameraMode::User) ? free_camera : scene_viewer.debug_camera;
 				if (evt.type == InputEvent::MouseButtonUp && evt.button.button == GLFW_MOUSE_BUTTON_LEFT) {
 					// cancel upon button lifted:
 					action = nullptr;
@@ -2249,10 +1707,10 @@ void Tutorial::on_input(InputEvent const &evt) {
 			float init_x = evt.button.x;
 			float init_y = evt.button.y;
 			OrbitCamera init_camera = active_cam;
-			CameraMode captured_mode = camera_mode;
+			SceneViewer::CameraMode captured_mode = scene_viewer.camera_mode;
 
 			action = [this, init_x, init_y, init_camera, captured_mode](InputEvent const &evt) {
-				OrbitCamera &cam = (captured_mode == CameraMode::User) ? free_camera : debug_camera;
+				OrbitCamera &cam = (captured_mode == SceneViewer::CameraMode::User) ? free_camera : scene_viewer.debug_camera;
 				if (evt.type == InputEvent::MouseButtonUp && evt.button.button == GLFW_MOUSE_BUTTON_LEFT) {
 					// cancel upon button lifted:
 					action = nullptr;
