@@ -9,6 +9,13 @@
 
 #include "S72.hpp"
 
+#ifdef near
+#undef near
+#endif
+#ifdef far
+#undef far
+#endif
+
 struct Tutorial : RTG::Application {
 
 	Tutorial(RTG &);
