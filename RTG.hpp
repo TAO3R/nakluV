@@ -82,7 +82,7 @@ struct RTG {
 		void parse(int argc, char **argv); //parse command-line options; throws on error
 		static void usage(std::function< void(const char *, const char *) > const &callback); //reports command line usage by passing flag and description to callback.
 
-		// A1
+		// A1-Scene Viewer:
 		std::string scene_file = "";	// --scene
 		bool print_scene = false;		// --print
 		std::string scene_camera = "";	// --camera

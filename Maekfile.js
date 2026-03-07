@@ -35,6 +35,7 @@ const main_objs = [
 	maek.CPP('PosNorTexVertex.cpp'),
 	maek.CPP('RTG.cpp'),
 	maek.CPP('Helpers.cpp'),
+	maek.CPP('SceneViewer/SceneViewer.cpp'),
 	maek.CPP('main.cpp'),
 ];
 
@@ -123,6 +124,7 @@ function custom_flags_and_rules() {
 			'/wd4100', //unused formal parameter
 			'/wd4201', //nameless struct/union
 			'/wd4146', //-1U is unsigned
+			'/I.',
 			`/I${VULKAN_SDK}/Include`,
 			`/I../glfw-3.4.bin.WIN64/include`,
 		];
