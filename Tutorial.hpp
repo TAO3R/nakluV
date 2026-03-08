@@ -403,6 +403,43 @@ struct Tutorial : RTG::Application {
 	int get_lerp_interval(const std::vector<float> &times, float t);
 
 	/**
+	 * Step interpolation for vec3. Holds the value at the start of the interval (a) for t in [0, 1).
+	 * @param a Lower bound of the interval
+	 * @param b Upper bound of the interval
+	 * @param t Normalized fraction [0, 1]
+	 * @return a if t < 1, otherwise b
+	 */
+	S72::vec3 step(S72::vec3 const &a, S72::vec3 const &b, float t);
+
+	/**
+	 * Step interpolation for quat. Holds the value at the start of the interval (a) for t in [0, 1).
+	 */
+	S72::quat step(S72::quat const &a, S72::quat const &b, float t);
+
+	/**
+	 * Linear interpolation for vec3.
+	 * @param a Lower bound
+	 * @param b Upper bound
+	 * @param t Normalized fraction [0, 1]
+	 */
+	S72::vec3 lerp(S72::vec3 const &a, S72::vec3 const &b, float t);
+
+	/**
+	 * Linear interpolation for quat. LERPs each component and normalizes the result.
+	 */
+	S72::quat lerp(S72::quat const &a, S72::quat const &b, float t);
+
+	/**
+	 * Spherical linear interpolation. For vec3: falls back to linear interpolation.
+	 * For quat: interpolates along the shortest arc on the quaternion sphere.
+	 * @param a Lower bound
+	 * @param b Upper bound
+	 * @param t Normalized fraction [0, 1]
+	 */
+	S72::vec3 slerp(S72::vec3 const &a, S72::vec3 const &b, float t);
+	S72::quat slerp(S72::quat const &a, S72::quat const &b, float t);
+
+	/**
 	 * Called ...
 	 * Tries to get the interpolated value of a driver given a timestamp
 	 * @param t

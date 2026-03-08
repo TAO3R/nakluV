@@ -1,5 +1,7 @@
 #include <cassert>
 #include <iostream>
+#include <algorithm>
+#include <cmath>
 
 #include "Tutorial.hpp"
 
@@ -264,7 +266,26 @@ void Tutorial::draw_bounds(const WorldBounds &bounds)
 }	// end of draw_bounds
 
 int Tutorial::get_lerp_interval(const std::vector<float> &times, float t)
-{
+{   
+    // no valid interval
+    if (times.size() < 2)
+    {
+        return -1;
+    }
+
+    // clamp to the first frame
+    if (t < times[0])
+    {
+        return 0;
+    }
+
+    // clamp to the last frame
+    if (t >= times.back())
+    {
+        return times.size() - 2;
+    }
+    
+    // search for the enclosing interval
     uint32_t index = 0;
     for (; index < times.size() - 1; index++)
     {
@@ -273,9 +294,79 @@ int Tutorial::get_lerp_interval(const std::vector<float> &times, float t)
             return index;
         }
     }
-    
+
     return -1;
 }   // end of get lerp interval
+
+S72::vec3 Tutorial::step(S72::vec3 const &a, S72::vec3 const &b, float t)
+{
+    if (t >= 1.0f) { return b; }
+    return a;
+}
+
+S72::quat Tutorial::step(S72::quat const &a, S72::quat const &b, float t)
+{
+    if (t >= 1.0f) { return b; }
+    return a;
+}
+
+S72::vec3 Tutorial::lerp(S72::vec3 const &a, S72::vec3 const &b, float t)
+{
+    if (t <= 0.0f) { return a; }
+    if (t >= 1.0f) { return b; }
+    return S72::vec3{
+        a.x + t * (b.x - a.x),
+        a.y + t * (b.y - a.y),
+        a.z + t * (b.z - a.z),
+    };
+}
+
+S72::quat Tutorial::lerp(S72::quat const &a, S72::quat const &b, float t)
+{
+    if (t <= 0.0f) { return a; }
+    if (t >= 1.0f) { return b; }
+    float qx = (1.0f - t) * a.x + t * b.x;
+    float qy = (1.0f - t) * a.y + t * b.y;
+    float qz = (1.0f - t) * a.z + t * b.z;
+    float qw = (1.0f - t) * a.w + t * b.w;
+    float len = std::sqrt(qx * qx + qy * qy + qz * qz + qw * qw);
+    if (len > 1e-6f) {
+        qx /= len; qy /= len; qz /= len; qw /= len;
+    }
+    return S72::quat{ .x = qx, .y = qy, .z = qz, .w = qw };
+}
+
+// For vec3: use linear interpolation (slerp falls back to lerp)
+S72::vec3 Tutorial::slerp(S72::vec3 const &a, S72::vec3 const &b, float t)
+{
+    return lerp(a, b, t);
+}
+
+S72::quat Tutorial::slerp(S72::quat const &a, S72::quat const &b, float t)
+{
+    if (t <= 0.0f) { return a; }
+    if (t >= 1.0f) { return b; }
+    float q0x = a.x, q0y = a.y, q0z = a.z, q0w = a.w;
+    float q1x = b.x, q1y = b.y, q1z = b.z, q1w = b.w;
+    float dot = q0x * q1x + q0y * q1y + q0z * q1z + q0w * q1w;
+    if (dot < 0.0f) {
+        q1x = -q1x; q1y = -q1y; q1z = -q1z; q1w = -q1w;
+        dot = -dot;
+    }
+    if (dot > 0.9995f) {
+        return lerp(a, b, t);
+    }
+    float theta = std::acos(std::clamp(dot, -1.0f, 1.0f));
+    float sin_theta = std::sin(theta);
+    float wa = std::sin((1.0f - t) * theta) / sin_theta;
+    float wb = std::sin(t * theta) / sin_theta;
+    return S72::quat{
+        .x = wa * q0x + wb * q1x,
+        .y = wa * q0y + wb * q1y,
+        .z = wa * q0z + wb * q1z,
+        .w = wa * q0w + wb * q1w,
+    };
+}
 
 std::vector<float> Tutorial::get_lerp_value(const S72::Driver &d, float t)
 {
@@ -286,95 +377,50 @@ std::vector<float> Tutorial::get_lerp_value(const S72::Driver &d, float t)
         return {-1};
     }
 
+    // @return
     std::vector<float> values{};
-    float a = d.times[index], b = d.times[index + 1];   // timestamps at lb and up of the interval
 
-    if (d.interpolation == S72::Driver::Interpolation::STEP)
+    // timestamps at lb and up of the interval
+    float a = d.times[index], b = d.times[index + 1];
+
+    // t
+    float fraction = (b - a) > 0.0f ? (t - a) / (b - a) : 0.0f;
+    fraction = std::clamp(fraction, 0.0f, 1.0f);
+
+    if (d.channel == S72::Driver::Channel::translation || d.channel == S72::Driver::Channel::scale)
     {
-        if (d.channel == S72::Driver::Channel::translation || d.channel == S72::Driver::Channel::scale)
-        {
-            if (t < (a + b) / 2.0f)
-            {   // closer to lb
-                values.emplace_back(d.times[index * 3]);
-                values.emplace_back(d.times[index * 3 + 1]);
-                values.emplace_back(d.times[index * 3 + 2]);
-            }
-            else
-            {   // closer to ub
-                values.emplace_back(d.times[(index + 1) * 3]);
-                values.emplace_back(d.times[(index + 1) * 3 + 1]);
-                values.emplace_back(d.times[(index + 1) * 3 + 2]);
-            }
-        }
-        else if (d.channel == S72::Driver::Channel::rotation)
-        {
-            if (t < (a + b) / 2.0f)
-            {   // closer to lb
-                values.emplace_back(d.times[index * 3]);
-                values.emplace_back(d.times[index * 3 + 1]);
-                values.emplace_back(d.times[index * 3 + 2]);
-                values.emplace_back(d.times[index * 3 + 3]);
-            }
-            else
-            {   // closer to ub
-                values.emplace_back(d.times[(index + 1) * 3]);
-                values.emplace_back(d.times[(index + 1) * 3 + 1]);
-                values.emplace_back(d.times[(index + 1) * 3 + 2]);
-                values.emplace_back(d.times[(index + 1) * 3 + 3]);
-            }
-        }
+        S72::vec3 va{ d.values[index * 3 + 0], d.values[index * 3 + 1], d.values[index * 3 + 2] };
+        S72::vec3 vb{ d.values[(index + 1) * 3 + 0], d.values[(index + 1) * 3 + 1], d.values[(index + 1) * 3 + 2] };
+        S72::vec3 result;
+        if (d.interpolation == S72::Driver::Interpolation::STEP)
+            result = step(va, vb, fraction);
+        else if (d.interpolation == S72::Driver::Interpolation::LINEAR)
+            result = lerp(va, vb, fraction);
+        else if (d.interpolation == S72::Driver::Interpolation::SLERP)
+            result = slerp(va, vb, fraction);
         else
-        {
             return {-1};
-        }
-        
+        values.emplace_back(result.x);
+        values.emplace_back(result.y);
+        values.emplace_back(result.z);
     }
-    else if (d.interpolation == S72::Driver::Interpolation::LINEAR)
+    else if (d.channel == S72::Driver::Channel::rotation)
     {
-        float fraction = (t - a) / (b - a);
-
-        if (d.channel == S72::Driver::Channel::translation || d.channel == S72::Driver::Channel::scale)
-        {
-            // v = a + t(b - a)
-            values.emplace_back(
-                d.times[index * 3] + fraction * (d.times[(index + 1) * 3] - d.times[index * 3]));
-            values.emplace_back(
-                d.times[index * 3 + 1] + fraction * (d.times[(index + 1) * 3 + 1] - d.times[index * 3 + 1]));
-            values.emplace_back(
-                d.times[index * 3 + 2] + fraction * (d.times[(index + 1) * 3 + 2] - d.times[index * 3 + 2]));
-        }
-        else if (d.channel == S72::Driver::Channel::rotation)
-        {
-            values.emplace_back(
-                d.times[index * 3] + fraction * (d.times[(index + 1) * 3] - d.times[index * 3]));
-            values.emplace_back(
-                d.times[index * 3 + 1] + fraction * (d.times[(index + 1) * 3 + 1] - d.times[index * 3 + 1]));
-            values.emplace_back(
-                d.times[index * 3 + 2] + fraction * (d.times[(index + 1) * 3 + 2] - d.times[index * 3 + 2]));
-            values.emplace_back(
-                d.times[index * 3 + 3] + fraction * (d.times[(index + 1) * 3 + 3] - d.times[index * 3 + 3]));
-        }
+        S72::quat qa{ d.values[index * 4 + 0], d.values[index * 4 + 1], d.values[index * 4 + 2], d.values[index * 4 + 3] };
+        S72::quat qb{ d.values[(index + 1) * 4 + 0], d.values[(index + 1) * 4 + 1], d.values[(index + 1) * 4 + 2], d.values[(index + 1) * 4 + 3] };
+        S72::quat result;
+        if (d.interpolation == S72::Driver::Interpolation::STEP)
+            result = step(qa, qb, fraction);
+        else if (d.interpolation == S72::Driver::Interpolation::LINEAR)
+            result = lerp(qa, qb, fraction);
+        else if (d.interpolation == S72::Driver::Interpolation::SLERP)
+            result = slerp(qa, qb, fraction);
         else
-        {
             return {-1};
-        }
-    }
-    else if (d.interpolation == S72::Driver::Interpolation::SLERP)
-    {
-        float fraction = (t - a) / (b - a);
-
-        if (d.channel == S72::Driver::Channel::translation || d.channel == S72::Driver::Channel::scale)
-        {
-            
-        }
-        else if (d.channel == S72::Driver::Channel::rotation)
-        {
-
-        }
-        else
-        {
-            return {-1};
-        }
+        values.emplace_back(result.x);
+        values.emplace_back(result.y);
+        values.emplace_back(result.z);
+        values.emplace_back(result.w);
     }
     else
     {
