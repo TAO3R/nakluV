@@ -1367,6 +1367,7 @@ void Tutorial::update(float dt) {
 	
 	{	// modify time in every update
 		time = std::fmod(time + dt, 60.0f);
+		anim_time = std::fmod(anim_time + dt, 60.0f);
 	}
 
 	{	// handle camera mode
@@ -1782,7 +1783,7 @@ void Tutorial::update(float dt) {
 		{	
 			// apply drivers
 			for (const S72::Driver &drv : scene_S72.drivers) {
-				apply_driver(drv, time);
+				apply_driver(drv, anim_time);
 			}
 			
 			// traverse scene graph to compute proper world transforms and push object instances
@@ -1929,6 +1930,11 @@ void Tutorial::on_input(InputEvent const &evt) {
 			{
 				bv_mode = BoundingVolumeMode((int(bv_mode) + int(BoundingVolumeMode::Count) - 1) % int(BoundingVolumeMode::Count));
 				std::cout << "[Tutorial.cpp]: bounding volume mode switched to " << int(bv_mode) << std::endl;
+			}
+			else if (evt.key.key == GLFW_KEY_R)
+			{
+				anim_time = 0.0f;
+				std::cout << "[Tutorial.cpp]: replay the animation." << std::endl;
 			}
 			return;
 		}

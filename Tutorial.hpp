@@ -459,4 +459,7 @@ struct Tutorial : RTG::Application {
 	 * 	The timestamp to apply at
 	 */
 	void apply_driver(const S72::Driver &d, float t);
+
+	/** Stores the time value for sampling animations */
+	float anim_time = 0.0f;
 };
