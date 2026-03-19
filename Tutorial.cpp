@@ -1780,6 +1780,11 @@ void Tutorial::update(float dt) {
 		// scene loaded: create instances from scene meshes
 		if (scene_vertices.handle != VK_NULL_HANDLE)
 		{	
+			// apply drivers
+			for (const S72::Driver &drv : scene_S72.drivers) {
+				apply_driver(drv, time);
+			}
+			
 			// traverse scene graph to compute proper world transforms and push object instances
 			for (auto& root : scene_S72.scene.roots)
 			{

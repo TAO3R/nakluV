@@ -6,7 +6,6 @@
 #include "Tutorial.hpp"
 
 
-
 void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 {
 	//	node's local transform = T * R * S
@@ -282,7 +281,7 @@ int Tutorial::get_lerp_interval(const std::vector<float> &times, float t)
     // clamp to the last frame
     if (t >= times.back())
     {
-        return times.size() - 2;
+        return int(times.size() - 2);
     }
     
     // search for the enclosing interval
@@ -374,7 +373,7 @@ std::vector<float> Tutorial::get_lerp_value(const S72::Driver &d, float t)
 
     if (index == -1)
     {
-        return {-1};
+        return {-1.0f};
     }
 
     // @return
@@ -399,7 +398,7 @@ std::vector<float> Tutorial::get_lerp_value(const S72::Driver &d, float t)
         else if (d.interpolation == S72::Driver::Interpolation::SLERP)
             result = slerp(va, vb, fraction);
         else
-            return {-1};
+            return {-1.0f};
         values.emplace_back(result.x);
         values.emplace_back(result.y);
         values.emplace_back(result.z);
@@ -416,7 +415,7 @@ std::vector<float> Tutorial::get_lerp_value(const S72::Driver &d, float t)
         else if (d.interpolation == S72::Driver::Interpolation::SLERP)
             result = slerp(qa, qb, fraction);
         else
-            return {-1};
+            return {-1.0f};
         values.emplace_back(result.x);
         values.emplace_back(result.y);
         values.emplace_back(result.z);
@@ -424,7 +423,7 @@ std::vector<float> Tutorial::get_lerp_value(const S72::Driver &d, float t)
     }
     else
     {
-        return {-1};
+        return {-1.0f};
     }
 
     return values;
@@ -433,6 +432,38 @@ std::vector<float> Tutorial::get_lerp_value(const S72::Driver &d, float t)
 
 void Tutorial::apply_driver(const S72::Driver &d, float t)
 {
+    std::vector<float> vals = get_lerp_value(d, t);
+	
+    if (vals.size() == 1 && vals[0] == -1.0f) {
+        // Error sentinel from get_lerp_value
+        return;
+    }
 
+    // Apply to the node based on channel
+    if (d.channel == S72::Driver::Channel::translation) {
+        if (vals.size() != 3) return;
+        d.node.translation = S72::vec3{
+            .x = vals[0],
+            .y = vals[1],
+            .z = vals[2],
+        };
+    }
+    else if (d.channel == S72::Driver::Channel::scale) {
+        if (vals.size() != 3) return;
+        d.node.scale = S72::vec3{
+            .x = vals[0],
+            .y = vals[1],
+            .z = vals[2],
+        };
+    }
+    else if (d.channel == S72::Driver::Channel::rotation) {
+        if (vals.size() != 4) return;
+        d.node.rotation = S72::quat{
+            .x = vals[0],
+            .y = vals[1],
+            .z = vals[2],
+            .w = vals[3],
+        };
+    }
 }   // end of apply driver
 

@@ -377,6 +377,7 @@ struct Tutorial : RTG::Application {
 
 	/**
 	 * Called within traverse_node if culling mode is set to frustum culling
+	 * https://bruop.github.io/improved_frustum_culling/
 	 * Judges whether a bounding volume is inside the camera's frustum.
 	 * @return Whether a bounding volume is inside the camera's frustum
 	 */
