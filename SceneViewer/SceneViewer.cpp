@@ -6,6 +6,19 @@
 #include "Tutorial.hpp"
 
 
+
+void Tutorial::build_scene_materials()
+{
+	for (auto it : scene_S72.materials)
+	{
+		if (it.second.brdf == S72::Material::Lambertian)
+		{
+			
+		}
+	}
+
+}	// end of build scene materials
+
 void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 {
 	//	node's local transform = T * R * S
