@@ -254,6 +254,16 @@ struct Tutorial : RTG::Application {
 	/** A hash table to look up meshes by name */
 	std::unordered_map<std::string,	SceneMesh> scene_meshes;
 
+	/** A hash table to look up texture descriptor set index by material */
+	std::unordered_map<S72::Material const *, uint32_t> mat_to_tex;
+
+	/**
+	 * Helper function that converts normalized rgb value to hex value
+	 * @param struct wrapping normalized rgb value
+	 * @return hex value
+	 */
+	uint32_t color_to_hex(S72::color const *col);
+
 	/**
 	 * Called ...
 	 * Iterates scene_s72.materials to build scene materials

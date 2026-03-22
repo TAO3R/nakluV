@@ -2,20 +2,223 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <filesystem>
+#include <memory>
 
 #include "Tutorial.hpp"
+#include "print_scene.hpp"
+#define STB_IMAGE_IMPLEMENTATION
+#include "SceneViewer/stb_image.h"
 
+void Tutorial::load_scene()
+{
+	try {
+		scene_S72 = S72::load(rtg.configuration.scene_file.data());
+		if (rtg.configuration.print_scene)
+		{
+			print_info(scene_S72);
+			print_scene_graph(scene_S72);
+		}
+	} catch (std::exception &e) {
+		std::cerr << "Failed to load s72-format scene from " << rtg.configuration.scene_file << "\n" << e.what() << std::endl;
+	}
+}	// end of load scene
 
+void Tutorial::load_scene_binaries()
+{
+	std::cout << "\n[Tutorial.cpp]: loading .b72 binary files into memory." << std::endl;
+	// iterate through all data files referenced by the scene
+	for (auto& [src_name, data_file] : scene_S72.data_files)	// <std::string, DataFile>
+	{
+		// Open file in binary mode, positioned at end
+		std::ifstream file(data_file.path, std::ios::binary | std::ios::ate);
+		
+		// Get file size (we're at end due to ios::ate)
+		size_t size = file.tellg();
+		
+		// Rewind to beginning
+		file.seekg(0, std::ios::beg);
+		
+		// Allocate buffer and read all bytes
+		std::vector<uint8_t> bytes(size);
+		file.read(reinterpret_cast<char*>(bytes.data()), size);
+		
+		// Store in map
+		loaded_data[src_name] = std::move(bytes);
+	}
+
+	// === DEBUG: Print loaded binary file info ===
+	std::cout << "--- Loaded Binary Data Files ---" << std::endl;
+	std::cout << "Total files loaded: " << loaded_data.size() << std::endl;
+
+	size_t total_bytes = 0;
+	for (auto& [src_name, bytes] : loaded_data) {
+		std::cout << "  " << src_name << ": " << bytes.size() << " bytes" << std::endl;
+		total_bytes += bytes.size();
+	}
+
+	std::cout << "Total bytes loaded: " << total_bytes;
+	if (total_bytes > 1024 * 1024) {
+		std::cout << " (" << (total_bytes / (1024.0 * 1024.0)) << " MB)";
+	} else if (total_bytes > 1024) {
+		std::cout << " (" << (total_bytes / 1024.0) << " KB)";
+	}
+	std::cout << std::endl;
+	std::cout << "--------------------------------" << std::endl;
+}	// end of load scene binaries
+
+uint32_t Tutorial::color_to_hex(S72::color const *col)
+{
+	uint32_t r = static_cast<uint32_t>(std::round(std::clamp(col->r, 0.0f, 1.0f) * 255.0f));
+	uint32_t g = static_cast<uint32_t>(std::round(std::clamp(col->g, 0.0f, 1.0f) * 255.0f));
+	uint32_t b = static_cast<uint32_t>(std::round(std::clamp(col->b, 0.0f, 1.0f) * 255.0f));
+	uint32_t a = 255;
+
+	// 0xAABBGGRR
+	return (a << 24) | (b << 16) | (g << 8) | r;
+
+}	// end of color to hex
 
 void Tutorial::build_scene_materials()
 {
-	for (auto it : scene_S72.materials)
+	// initialize mat-tex look-up table
+	mat_to_tex.clear();
+
+	std::cout << "[SceneViewer.cpp]: Number of materials in the scene: " << scene_S72.materials.size() << std::endl;
+	std::cout << "[SceneViewer.cpp]: current textures size: " << textures.size() << std::endl;
+	std::cout << "[SceneViewer.cpp]: Current mat_to_tex size: " << mat_to_tex.size() << std::endl;
+	
+	// for (auto it : scene_S72.materials)
+	// Must iterate by reference: `&it.second` must point at Materials *in* the map. With
+	// `for (auto it : ...)`, `it` is a copy each iteration, so `&it.second` is the same
+	// stack address every time and mat_to_tex would only keep one (wrong) entry.
+	for (auto const &it : scene_S72.materials)
 	{
-		if (it.second.brdf == S72::Material::Lambertian)
+		if (std::holds_alternative<S72::Material::PBR>(it.second.brdf))
 		{
 			
 		}
-	}
+		else if (std::holds_alternative<S72::Material::Lambertian>(it.second.brdf))
+		{
+			std::cout << "[SceneViewer.cpp]: Building a Lambertian ";
+			
+			auto const &lamb = std::get<S72::Material::Lambertian>(it.second.brdf);
+			if (std::holds_alternative<S72::color>(lamb.albedo))	// solid color albedo
+			{	
+				auto const &col = std::get<S72::color>(lamb.albedo);
+
+				std::cout << "solid color albedo of color " << it.second.name << std::endl;
+
+				// make the albedo texture
+				uint8_t size = 1;
+				std::vector<uint32_t> data{};
+				data.emplace_back(color_to_hex(&col));
+
+				// make a place for the texture to live on the GPU
+				textures.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{ .width = size, .height = size },	// size of image
+					VK_FORMAT_R8G8B8A8_UNORM,	// how to interpret image data
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,	// will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device local
+					Helpers::Unmapped
+				));
+
+				// save to the table to be looked up
+				mat_to_tex.emplace(&it.second, uint32_t(textures.size() - 1));
+
+				std::cout << "[SceneViewer.cpp]: current textures size: " << textures.size() << std::endl;
+				std::cout << "[SceneViewer.cpp]: Current mat_to_tex size: " << mat_to_tex.size() << std::endl;
+
+				// transfer data
+				rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+			}
+			else if (std::holds_alternative<S72::Texture *>(lamb.albedo))
+			{
+				std::cout << "texture albedo" << std::endl;
+
+				// Albedo is an image: lamb.albedo holds S72::Texture* (not S72::Texture by value)
+				S72::Texture *tex = std::get<S72::Texture *>(lamb.albedo);
+				if (tex == nullptr)
+				{
+					std::cerr << "[SceneViewer.cpp]: Lambertian texture albedo has null Texture*.\n";
+					continue;
+				}
+				if (tex->type != S72::Texture::Type::flat)
+				{
+					std::cerr << "[SceneViewer.cpp]: Lambertian albedo expects a flat 2D texture; got non-flat: "
+						<< tex->src << "\n";
+					continue;
+				}
+				if (tex->format == S72::Texture::Format::rgbe)
+				{
+					std::cerr << "[SceneViewer.cpp]: Lambertian texture albedo RGBE/HDR not supported yet: "
+						<< tex->src << "\n";
+					continue;
+				}
+
+				int w = 0, h = 0;
+				std::unique_ptr<unsigned char, void (*)(void *)> pixels(
+					stbi_load(tex->path.c_str(), &w, &h, nullptr, 4),
+					[](void *p) { stbi_image_free(p); }
+				);
+				if (!pixels)
+				{
+					std::cerr << "[SceneViewer.cpp]: Failed to load texture \"" << tex->path
+						<< "\": " << stbi_failure_reason() << "\n";
+					continue;
+				}
+				if (w <= 0 || h <= 0)
+				{
+					std::cerr << "[SceneViewer.cpp]: Invalid texture dimensions for \"" << tex->path << "\".\n";
+					continue;
+				}
+
+				VkFormat vk_format = (tex->format == S72::Texture::Format::srgb)
+					? VK_FORMAT_R8G8B8A8_SRGB
+					: VK_FORMAT_R8G8B8A8_UNORM;
+
+				size_t byte_size = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
+
+				textures.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{ .width = static_cast<uint32_t>(w), .height = static_cast<uint32_t>(h) },
+					vk_format,
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+					Helpers::Unmapped
+				));
+
+				mat_to_tex[&it.second] = uint32_t(textures.size() - 1);
+
+				rtg.helpers.transfer_to_image(pixels.get(), byte_size, textures.back());
+			}
+			else
+			{
+				std::cout << "unknown albedo" << std::endl;
+				std::cerr << "[SceneViewer.cpp]: Trying to build a Lambertian material from an unknown source." << std::endl;
+				continue;
+			}
+
+		}
+		else if (std::holds_alternative<S72::Material::Mirror>(it.second.brdf))
+		{
+
+		}
+		else if (std::holds_alternative<S72::Material::Environment>(it.second.brdf))
+		{
+			
+		}
+		else
+		{
+			std::cerr << "[SceneViewer.cpp]: Trying to build a material of an unknown type." << std::endl;
+			continue;
+		}
+
+	}	// end of for loop
+
+	std::cout << "[SceneViewer.cpp]: mat_to_tex size: " << mat_to_tex.size() << std::endl;
 
 }	// end of build scene materials
 
@@ -41,6 +244,18 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 				// push ObjectInstance to object_instances
 				// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
 				mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
+				
+				// texture index
+				uint32_t tex = 0;
+				if (const auto *mat = it->second.material)
+				{
+					auto itt = mat_to_tex.find(mat);
+					if (itt != mat_to_tex.end())
+					{
+						tex = itt->second;
+					}
+				}
+
 				object_instances.emplace_back(ObjectInstance{
 					.vertices = it->second.vertices,
 					.transform {
@@ -48,8 +263,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 						.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
 						.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
 					},
-					// TODO: texture
-					
+					.texture = tex,
 				});
 			}
 			else if (culling_mode == CullingMode::Frustum)
@@ -63,6 +277,18 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 					// push ObjectInstance to object_instances
 					// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
 					mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
+					
+					// texture index
+					uint32_t tex = 0;
+					if (auto *mat = it->second.material)
+					{
+						auto itt = mat_to_tex.find(mat);
+						if (itt != mat_to_tex.end())
+						{
+							tex = itt->second;
+						}
+					}
+
 					object_instances.emplace_back(ObjectInstance{
 						.vertices = it->second.vertices,
 						.transform {
@@ -70,8 +296,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 							.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
 							.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
 						},
-						// TODO: texture
-
+						.texture = tex,
 					});
 
 					// push WorldBounds to object_bounds

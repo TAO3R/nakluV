@@ -2,7 +2,6 @@
 
 #include "VK.hpp"
 // #include "refsol.hpp"
-#include "print_scene.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -11,8 +10,6 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
-#include <fstream>
-#include <filesystem>
 
 // Constructor
 Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
@@ -271,16 +268,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	// A1: scene load and info print if specified
 	if (!rtg.configuration.scene_file.empty())
 	{
-		try {
-			scene_S72 = S72::load(rtg.configuration.scene_file.data());
-			if (rtg.configuration.print_scene)
-			{
-				print_info(scene_S72);
-				print_scene_graph(scene_S72);
-			}
-		} catch (std::exception &e) {
-			std::cerr << "Failed to load s72-format scene from " << rtg.configuration.scene_file << "\n" << e.what() << std::endl;
-		}
+		load_scene();
 	}	// end of scene load and info print
 
 	// A1: load .b72 files into memory if the scene is successfully loaded
@@ -290,46 +278,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	}
 	else
 	{
-		std::cout << "\n[Tutorial.cpp]: loading .b72 binary files into memory." << std::endl;
-		// iterate through all data files referenced by the scene
-		for (auto& [src_name, data_file] : scene_S72.data_files)	// <std::string, DataFile>
-		{
-			// Open file in binary mode, positioned at end
-			std::ifstream file(data_file.path, std::ios::binary | std::ios::ate);
-			
-			// Get file size (we're at end due to ios::ate)
-			size_t size = file.tellg();
-			
-			// Rewind to beginning
-			file.seekg(0, std::ios::beg);
-			
-			// Allocate buffer and read all bytes
-			std::vector<uint8_t> bytes(size);
-			file.read(reinterpret_cast<char*>(bytes.data()), size);
-			
-			// Store in map
-			loaded_data[src_name] = std::move(bytes);
-		}
-
-		// === DEBUG: Print loaded binary file info ===
-		std::cout << "--- Loaded Binary Data Files ---" << std::endl;
-		std::cout << "Total files loaded: " << loaded_data.size() << std::endl;
-
-		size_t total_bytes = 0;
-		for (auto& [src_name, bytes] : loaded_data) {
-			std::cout << "  " << src_name << ": " << bytes.size() << " bytes" << std::endl;
-			total_bytes += bytes.size();
-		}
-
-		std::cout << "Total bytes loaded: " << total_bytes;
-		if (total_bytes > 1024 * 1024) {
-			std::cout << " (" << (total_bytes / (1024.0 * 1024.0)) << " MB)";
-		} else if (total_bytes > 1024) {
-			std::cout << " (" << (total_bytes / 1024.0) << " KB)";
-		}
-		std::cout << std::endl;
-		std::cout << "--------------------------------" << std::endl;
-
+		load_scene_binaries();
 	}	// end of loading .b72 files
 
 	{	// A1: construct scene meshes from loaded binary files and upload to the GPU
@@ -442,6 +391,12 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			std::cout << "[Tutorial.cpp]: no binary data loaded when trying to construct scene meshes." << std::endl;
 		}
 	}	// end of scene mesh construction
+
+	{	// build materials
+
+		build_scene_materials();
+
+	}	// end of build materials
 
 	{	// A1: build SecneCamera instances from the scene and set camera (index & mode) if specified
 		
