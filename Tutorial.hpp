@@ -344,6 +344,11 @@ struct Tutorial : RTG::Application {
 	/** Stores information of 6 frustum planes in the order of left, right, buttom, top, near, far */
 	float frustum_planes[6][4];
 
+	/** World-space frustum corners (NDC cube transformed by inverse of CULLING_CLIP_FROM_WORLD). Order: near 0,1,2,3, far 4,5,6,7. */
+	float frustum_corners[8][3];
+	/** Six unique frustum edge directions (normalized), for SAT cross-product axes. */
+	float frustum_edges[6][3];
+
 	/**
 	 * Called every frame within Tutorial's update
 	 * Computes frustum planes (used for culling) to match the camera position
@@ -388,7 +393,7 @@ struct Tutorial : RTG::Application {
 	/**
 	 * Called within traverse_node if culling mode is set to frustum culling
 	 * https://bruop.github.io/improved_frustum_culling/
-	 * Judges whether a bounding volume is inside the camera's frustum.
+	 * Employs Separating Axis Theorem to perform a robust frustum culling.
 	 * @return Whether a bounding volume is inside the camera's frustum
 	 */
 	bool is_inside_frustum(WorldBounds &bounds);

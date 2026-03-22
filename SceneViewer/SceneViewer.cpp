@@ -389,48 +389,103 @@ Tutorial::WorldBounds Tutorial::get_world_bounds(SceneMesh const &mesh, mat4 con
 
 }	// end of get_world_bounds
 
+// Helper: project 8 corners onto axis (ax,ay,az), return {min,max}.
+static void project_corners(float const corners[8][3], float ax, float ay, float az,
+	float &out_min, float &out_max)
+{
+	out_min = out_max = ax * corners[0][0] + ay * corners[0][1] + az * corners[0][2];
+	for (int i = 1; i < 8; ++i) {
+		float p = ax * corners[i][0] + ay * corners[i][1] + az * corners[i][2];
+		out_min = std::min(out_min, p);
+		out_max = std::max(out_max, p);
+	}
+}
+
+// Helper: returns true if intervals [a_min,a_max] and [b_min,b_max] overlap.
+static bool intervals_overlap(float a_min, float a_max, float b_min, float b_max)
+{
+	return !(a_max < b_min || b_max < a_min);
+}
+
+// Helper: test separating axis; returns true if there is a separation (cull).
+static bool test_axis(float const frustum_corners[8][3], float const box_corners[8][3],
+	float ax, float ay, float az)
+{
+	float f_min, f_max, b_min, b_max;
+	project_corners(frustum_corners, ax, ay, az, f_min, f_max);
+	project_corners(box_corners, ax, ay, az, b_min, b_max);
+	return !intervals_overlap(f_min, f_max, b_min, b_max);
+}
+
 bool Tutorial::is_inside_frustum(WorldBounds &bounds)
 {
-	for (uint8_t i = 0; i < 6; i++)
+	// Build box corners: OBB uses bounds.corners; AABB uses min/max.
+	float box_corners[8][3];
+	float box_axes[3][3];
+
+	if (bv_mode == BoundingVolumeMode::OBB)
 	{
-		float a = frustum_planes[i][0],
-			  b = frustum_planes[i][1],
-			  c = frustum_planes[i][2],
-			  d = frustum_planes[i][3];
-
-		// test 8 OBB corners against each of the 6 planes
-		if (bv_mode == BoundingVolumeMode::OBB)
-		{
-			// cull if all 8 corners are outside of this plane
-			bool all_outside = true;
-			for (uint8_t j = 0; j < 8; j++)
-			{
-				float dist = a * bounds.corners[j][0]
-						   + b * bounds.corners[j][1]
-						   + c * bounds.corners[j][2]
-						   + d;
-				if (dist >= 0.0f) {
-					// at least one corner is inside this plane
-					all_outside = false;
-					break;
-				}
-			}
-			if (all_outside) return false;
+		for (int i = 0; i < 8; ++i)
+			for (int d = 0; d < 3; ++d)
+				box_corners[i][d] = bounds.corners[i][d];
+		// 3 OBB axes from edges
+		for (int d = 0; d < 3; ++d) {
+			box_axes[0][d] = bounds.corners[1][d] - bounds.corners[0][d];
+			box_axes[1][d] = bounds.corners[2][d] - bounds.corners[0][d];
+			box_axes[2][d] = bounds.corners[4][d] - bounds.corners[0][d];
 		}
-		else if (bv_mode == BoundingVolumeMode::AABB)
-		{
-			// p-vertex test: pick the corner most in the direction of the plane normal.
-			// If even that corner is outside, the whole box is outside.
-			float px = (a >= 0.0f) ? bounds.max_x : bounds.min_x;
-			float py = (b >= 0.0f) ? bounds.max_y : bounds.min_y;
-			float pz = (c >= 0.0f) ? bounds.max_z : bounds.min_z;
-
-			if (a * px + b * py + c * pz + d < 0.0f) return false;
+		for (int a = 0; a < 3; ++a) {
+			float len = std::sqrt(box_axes[a][0]*box_axes[a][0] + box_axes[a][1]*box_axes[a][1] + box_axes[a][2]*box_axes[a][2]);
+			float inv = (len > 1e-8f) ? (1.0f / len) : 1.0f;
+			box_axes[a][0] *= inv; box_axes[a][1] *= inv; box_axes[a][2] *= inv;
 		}
-		else
-		{
-			std::cout << "[Tutorial.cpp]: bounding volume with unknown type is presented. Returning from is_inside_frustum" << std::endl;
+	}
+	else if (bv_mode == BoundingVolumeMode::AABB)
+	{
+		// Corner order matches get_world_bounds: ix varies fastest (0=min,1=max)
+		box_corners[0][0]=bounds.min_x; box_corners[0][1]=bounds.min_y; box_corners[0][2]=bounds.min_z;
+		box_corners[1][0]=bounds.max_x; box_corners[1][1]=bounds.min_y; box_corners[1][2]=bounds.min_z;
+		box_corners[2][0]=bounds.min_x; box_corners[2][1]=bounds.max_y; box_corners[2][2]=bounds.min_z;
+		box_corners[3][0]=bounds.max_x; box_corners[3][1]=bounds.max_y; box_corners[3][2]=bounds.min_z;
+		box_corners[4][0]=bounds.min_x; box_corners[4][1]=bounds.min_y; box_corners[4][2]=bounds.max_z;
+		box_corners[5][0]=bounds.max_x; box_corners[5][1]=bounds.min_y; box_corners[5][2]=bounds.max_z;
+		box_corners[6][0]=bounds.min_x; box_corners[6][1]=bounds.max_y; box_corners[6][2]=bounds.max_z;
+		box_corners[7][0]=bounds.max_x; box_corners[7][1]=bounds.max_y; box_corners[7][2]=bounds.max_z;
+		box_axes[0][0]=1; box_axes[0][1]=0; box_axes[0][2]=0;
+		box_axes[1][0]=0; box_axes[1][1]=1; box_axes[1][2]=0;
+		box_axes[2][0]=0; box_axes[2][1]=0; box_axes[2][2]=1;
+	}
+	else
+	{
+		std::cerr << "[SceneViewer.cpp]: unknown bounding volume mode in is_inside_frustum\n";
+		return false;
+	}
+
+	// 26 SAT axes: 3 box face normals, 5 frustum face normals, 18 cross products (3 box x 6 frustum edges)
+
+	// 3 box axes
+	for (int i = 0; i < 3; ++i)
+		if (test_axis(frustum_corners, box_corners, box_axes[i][0], box_axes[i][1], box_axes[i][2]))
 			return false;
+
+	// 5 frustum face normals (near and far are anti-parallel, so 5 unique)
+	for (int i = 0; i < 5; ++i) {
+		float ax = frustum_planes[i][0], ay = frustum_planes[i][1], az = frustum_planes[i][2];
+		if (test_axis(frustum_corners, box_corners, ax, ay, az))
+			return false;
+	}
+
+	// 18 cross products: box_axes x frustum_edges
+	for (int bi = 0; bi < 3; ++bi) {
+		for (int fi = 0; fi < 6; ++fi) {
+			float cx = box_axes[bi][1] * frustum_edges[fi][2] - box_axes[bi][2] * frustum_edges[fi][1];
+			float cy = box_axes[bi][2] * frustum_edges[fi][0] - box_axes[bi][0] * frustum_edges[fi][2];
+			float cz = box_axes[bi][0] * frustum_edges[fi][1] - box_axes[bi][1] * frustum_edges[fi][0];
+			float len = std::sqrt(cx*cx + cy*cy + cz*cz);
+			if (len < 1e-8f) continue;  // parallel, skip
+			float inv = 1.0f / len;
+			if (test_axis(frustum_corners, box_corners, cx*inv, cy*inv, cz*inv))
+				return false;
 		}
 	}
 

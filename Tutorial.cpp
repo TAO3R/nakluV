@@ -1411,6 +1411,34 @@ void Tutorial::update(float dt) {
 		frustum_planes[5][2] = CULLING_CLIP_FROM_WORLD[11] - CULLING_CLIP_FROM_WORLD[10];
 		frustum_planes[5][3] = CULLING_CLIP_FROM_WORLD[15] - CULLING_CLIP_FROM_WORLD[14];
 
+		// compute frustum corners and edges for SAT
+		mat4 inv = mat4_inverse(CULLING_CLIP_FROM_WORLD);
+		float ndc[8][4] = {
+			{-1, -1, 0, 1}, { 1, -1, 0, 1}, {-1,  1, 0, 1}, { 1,  1, 0, 1},
+			{-1, -1, 1, 1}, { 1, -1, 1, 1}, {-1,  1, 1, 1}, { 1,  1, 1, 1},
+		};
+		for (int i = 0; i < 8; ++i) {
+			vec4 clip = {ndc[i][0], ndc[i][1], ndc[i][2], ndc[i][3]};
+			vec4 w = inv * clip;
+			frustum_corners[i][0] = w[0] / w[3];
+			frustum_corners[i][1] = w[1] / w[3];
+			frustum_corners[i][2] = w[2] / w[3];
+		}
+		
+		// 6 unique edge directions: near-right, near-up, and 4 radial (near->far)
+		int edge_pairs[6][2] = {{0,1},{0,2},{0,4},{1,5},{2,6},{3,7}};
+		for (int e = 0; e < 6; ++e) {
+			int a = edge_pairs[e][0], b = edge_pairs[e][1];
+			float dx = frustum_corners[b][0] - frustum_corners[a][0];
+			float dy = frustum_corners[b][1] - frustum_corners[a][1];
+			float dz = frustum_corners[b][2] - frustum_corners[a][2];
+			float len = std::sqrt(dx*dx + dy*dy + dz*dz);
+			float inv_len = (len > 1e-8f) ? (1.0f / len) : 1.0f;
+			frustum_edges[e][0] = dx * inv_len;
+			frustum_edges[e][1] = dy * inv_len;
+			frustum_edges[e][2] = dz * inv_len;
+		}
+
 	}	// end of computing frustum planes
 	
 	{	// static sun and sky:
