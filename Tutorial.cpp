@@ -1279,6 +1279,8 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
 			}
+
+			// std::cout << "[Tutorial.cpp]: Number of object instances to draw: " << object_instances.size() << std::endl;
 		}	// end of draw with objects pipeline
 
 		vkCmdEndRenderPass(workspace.command_buffer);
@@ -1918,7 +1920,7 @@ void Tutorial::on_input(InputEvent const &evt) {
 			{
 				anim_time = 0.0f;
 				std::cout << "[Tutorial.cpp]: replay the animation." << std::endl;
-			}
+                        			}
 			return;
 		}
 	}	// end of debug camera input handling

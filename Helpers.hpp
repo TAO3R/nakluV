@@ -101,5 +101,22 @@ struct Helpers {
 	//used to synchronize create/destroy with RTG:
 	void create(); //create vulkan resources (after GPU-held handles are created)
 	void destroy(); //destroy vulkan resources (before GPU-held handles are destroyed)
+
+	
+	// TEST
+
+	/** A helper struct for a file-write function */
+	struct FrameCSVWriter {
+		std::ofstream out;
+		FrameCSVWriter(const std::string &path) : out(path, std::ios::out | std::ios::trunc) {
+			out << "frame,render_ms\n";
+		}
+
+		void write(size_t frame, double ms)
+		{
+			out << frame << "," << ms << "\n";
+			out.flush();
+		}
+	};
 };
 

@@ -9,6 +9,9 @@
 
 #include "S72.hpp"
 
+#include <iostream>
+#include <fstream>
+
 #ifdef near
 #undef near
 #endif
@@ -477,4 +480,9 @@ struct Tutorial : RTG::Application {
 
 	/** Stores the time value for sampling animations */
 	float anim_time = 0.0f;
+
+
+	
+
+
 };

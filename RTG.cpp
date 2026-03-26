@@ -885,6 +885,10 @@ void RTG::run(Application &application) {
 	// setup time handling:
 	std::chrono::high_resolution_clock::time_point before = std::chrono::high_resolution_clock::now();
 
+	// A1: benchmarking
+	Helpers::FrameCSVWriter writer("..\A1\report\benchmarks\bench.csv");
+	size_t frame_idx = 0;
+
 	while (configuration.headless || !glfwWindowShouldClose(window)) {
 		float headless_dt = 0.0f;
 		std::string headless_save = "";
@@ -1024,6 +1028,9 @@ void RTG::run(Application &application) {
 				}
 			}
 
+			// A1: test
+			auto t0 = std::chrono::high_resolution_clock::now();
+
 			// queue the rendering work - call render function:
 			application.render(*this, RenderParams{
 				.workspace_index = workspace_index,
@@ -1049,6 +1056,12 @@ void RTG::run(Application &application) {
 				};
 
 				VK( vkQueueSubmit(graphics_queue, 1, &submit_info, headless_swapchain[image_index].image_presented) );
+
+				// A1: test
+				VK (vkWaitForFences(device, 1, &headless_swapchain[image_index].image_presented, VK_TRUE, UINT64_MAX) );
+				auto t1 = std::chrono::high_resolution_clock::now();
+				double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+				writer.write(frame_idx++, ms);
 
 			} else {	// present image (resize swapchain if needed)
 				VkPresentInfoKHR present_info{
