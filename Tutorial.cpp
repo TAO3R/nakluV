@@ -1766,6 +1766,7 @@ void Tutorial::update(float dt) {
 		// scene loaded: create instances from scene meshes
 		if (scene_vertices.handle != VK_NULL_HANDLE)
 		{	
+			// std::cout << "[Tutorial.cpp]: Number of drivers in the scene: " << scene_S72.drivers.size() << std::endl;
 			// apply drivers
 			for (const S72::Driver &drv : scene_S72.drivers) {
 				apply_driver(drv, anim_time);
