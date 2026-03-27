@@ -17,6 +17,7 @@
 #include <iostream>
 #include <sstream>
 #include <fstream>
+#include <filesystem>
 #include <set>
 
 void RTG::Configuration::parse(int argc, char **argv) {
@@ -886,7 +887,8 @@ void RTG::run(Application &application) {
 	std::chrono::high_resolution_clock::time_point before = std::chrono::high_resolution_clock::now();
 
 	// A1: benchmarking
-	Helpers::FrameCSVWriter writer("..\A1\report\benchmarks\bench.csv");
+	std::vector<double> bench_render_ms;
+	bench_render_ms.reserve(4096); // arbitrary; grows if needed
 	size_t frame_idx = 0;
 
 	while (configuration.headless || !glfwWindowShouldClose(window)) {
@@ -944,6 +946,9 @@ void RTG::run(Application &application) {
 			application.on_input(input);
 		}
 		event_queue.clear();
+
+		// A1: test
+		auto t0 = std::chrono::high_resolution_clock::now();
 
 		{	// elapsed time handling
 			std::chrono::high_resolution_clock::time_point after = std::chrono::high_resolution_clock::now();
@@ -1028,9 +1033,6 @@ void RTG::run(Application &application) {
 				}
 			}
 
-			// A1: test
-			auto t0 = std::chrono::high_resolution_clock::now();
-
 			// queue the rendering work - call render function:
 			application.render(*this, RenderParams{
 				.workspace_index = workspace_index,
@@ -1061,7 +1063,8 @@ void RTG::run(Application &application) {
 				VK (vkWaitForFences(device, 1, &headless_swapchain[image_index].image_presented, VK_TRUE, UINT64_MAX) );
 				auto t1 = std::chrono::high_resolution_clock::now();
 				double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-				writer.write(frame_idx++, ms);
+				bench_render_ms.push_back(ms);
+				++frame_idx;
 
 			} else {	// present image (resize swapchain if needed)
 				VkPresentInfoKHR present_info{
@@ -1105,6 +1108,27 @@ void RTG::run(Application &application) {
 				headless_swapchain[image_index].save();
 				headless_swapchain[image_index].save_to = "";
 			}
+		}
+	}
+
+	// A1 test: Write benchmark CSV once (avoid per-frame I/O overhead).
+	if (configuration.headless && !bench_render_ms.empty()) {
+		// Note: avoid backslashes in string literals ("\A" etc.); use forward slashes instead.
+		std::filesystem::path csv_path = "../A1/report/benchmarks/bench.csv";
+		std::error_code ec;
+		std::filesystem::create_directories(csv_path.parent_path(), ec);
+		if (ec) {
+			std::cerr << "WARNING: failed to create directories for benchmark CSV at '" << csv_path.string()
+				<< "': " << ec.message() << std::endl;
+		}
+
+		std::ofstream csv(csv_path, std::ios::out | std::ios::trunc);
+		if (!csv.is_open()) {
+			std::cerr << "WARNING: failed to open benchmark CSV for writing at '" << csv_path.string() << "'." << std::endl;
+		}
+		csv << "frame,render_ms\n";
+		for (size_t i = 0; i < bench_render_ms.size(); ++i) {
+			csv << i << "," << bench_render_ms[i] << "\n";
 		}
 	}
 

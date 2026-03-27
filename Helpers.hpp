@@ -2,6 +2,9 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <cstddef>
+#include <fstream>
+#include <string>
 #include <vector>
 
 struct RTG;
@@ -60,7 +63,7 @@ struct Helpers {
 		//NOTE: could define default constructor, move constructor, move assignment, destructor for a bit more paranoia
 	};
 	AllocatedImage create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map = Unmapped);
-	void destroy_image(AllocatedImage &&allocated_image);
+	void destroy_image(AllocatedImage &&allocated_image); 
 	
 
 	//-----------------------

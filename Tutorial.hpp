@@ -9,9 +9,6 @@
 
 #include "S72.hpp"
 
-#include <iostream>
-#include <fstream>
-
 #ifdef near
 #undef near
 #endif
@@ -268,7 +265,7 @@ struct Tutorial : RTG::Application {
 	uint32_t color_to_hex(S72::color const *col);
 
 	/**
-	 * Called ...
+	 * Called when Tutorial is constructed
 	 * Iterates scene_s72.materials to build scene materials
 	 */
 	void build_scene_materials();
