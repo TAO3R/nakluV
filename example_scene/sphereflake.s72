@@ -448,8 +448,46 @@
 	"children":["Sphere-1", "Level 1.006", "Level 1.007", "Level 1.009", "Level 1.010", "Level 1.011"]
 },
 {
+
+	"type":"CAMERA",
+	"name":"Custom-Camera",
+	"perspective":{
+		"aspect":1.77778,
+		"vfov":0.119856,
+		"near":0.1,
+		"far":1000
+	}
+},
+{
+	"type":"NODE",
+	"name":"Custom-Camera",
+	"translation":[0, 0, 60],
+	"rotation":[0,0,0,0],
+	"scale":[1,1,1],
+	"camera":"Custom-Camera"
+},
+{
+
+	"type":"CAMERA",
+	"name":"Custom-Camera2",
+	"perspective":{
+		"aspect":1.77778,
+		"vfov":0.119856,
+		"near":0.1,
+		"far":1000
+	}
+},
+{
+	"type":"NODE",
+	"name":"Custom-Camera2",
+	"translation":[-1, 0, 0],
+	"rotation":[0,0,0,0],
+	"scale":[1,1,1],
+	"camera":"Custom-Camera2"
+},
+{
 	"type":"SCENE",
 	"name":"sphereflake.blend",
-	"roots":["Sphere", "Level 1", "Level 1.001", "Level 1.002", "Level 1.003", "Level 1.004", "Level 1.005"]
+	"roots":["Sphere", "Level 1", "Level 1.001", "Level 1.002", "Level 1.003", "Level 1.004", "Level 1.005", "Custom-Camera", "Custom-Camera2"]
 }
 ]

@@ -265,7 +265,7 @@ struct Tutorial : RTG::Application {
 	uint32_t color_to_hex(S72::color const *col);
 
 	/**
-	 * Called when Tutorial is constructed
+	 * Called ...
 	 * Iterates scene_s72.materials to build scene materials
 	 */
 	void build_scene_materials();
@@ -314,8 +314,12 @@ struct Tutorial : RTG::Application {
 	/**
 	 * Called within build_scene_camera
 	 * Recursively searches for scene cameras from roots of a scene graph and builds scene camera instances
+	 * @param log_new_cameras if false, skip per-camera console spam (for per-frame refresh after drivers)
 	 */
-	void collect_cameras(S72::Node *node, mat4 parent_transform);
+	void collect_cameras(S72::Node *node, mat4 parent_transform, bool log_new_cameras = true);
+
+	/** Rebuild scene_cameras from the current node TRS (call after apply_driver so WORLD_FROM_CAMERA matches animation). */
+	void refresh_scene_cameras();
 
 	/** An orbit camera instance for debugging */
 	OrbitCamera debug_camera;
@@ -346,6 +350,7 @@ struct Tutorial : RTG::Application {
 
 	/** World-space frustum corners (NDC cube transformed by inverse of CULLING_CLIP_FROM_WORLD). Order: near 0,1,2,3, far 4,5,6,7. */
 	float frustum_corners[8][3];
+	
 	/** Six unique frustum edge directions (normalized), for SAT cross-product axes. */
 	float frustum_edges[6][3];
 
@@ -477,9 +482,4 @@ struct Tutorial : RTG::Application {
 
 	/** Stores the time value for sampling animations */
 	float anim_time = 0.0f;
-
-
-	
-
-
 };

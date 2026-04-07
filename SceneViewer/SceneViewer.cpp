@@ -321,7 +321,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 
 }	// end of traverse_node
 
-void Tutorial::collect_cameras(S72::Node *node, mat4 parent_transform)
+void Tutorial::collect_cameras(S72::Node *node, mat4 parent_transform, bool log_new_cameras)
 {
 	mat4 local_transform = mat4_translation(node->translation.x, node->translation.y, node->translation.z)
 						 * mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w)
@@ -337,15 +337,26 @@ void Tutorial::collect_cameras(S72::Node *node, mat4 parent_transform)
 				.camera = node->camera,
 				.WORLD_FROM_CAMERA = WORLD_FROM_LOCAL,
 			});
-		std::cout << "[Tutorial.cpp]: Emplacing camera: {" << node->camera->name << "} into scene_cameras." << std::endl;
+		if (log_new_cameras) {
+			std::cout << "[Tutorial.cpp]: Emplacing camera: {" << node->camera->name << "} into scene_cameras." << std::endl;
+		}
 	}
 
 	for (auto &child_node : node->children)
 	{
-		collect_cameras(child_node, WORLD_FROM_LOCAL);
+		collect_cameras(child_node, WORLD_FROM_LOCAL, log_new_cameras);
 	}
 
 }	// end of collect_cameras
+
+void Tutorial::refresh_scene_cameras()
+{
+	scene_cameras.clear();
+	for (S72::Node *root : scene_S72.scene.roots)
+	{
+		collect_cameras(root, mat4_identity(), false);
+	}
+}
 
 Tutorial::WorldBounds Tutorial::get_world_bounds(SceneMesh const &mesh, mat4 const &world_from_local)
 {

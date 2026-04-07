@@ -1327,6 +1327,19 @@ void Tutorial::update(float dt) {
 		anim_time = std::fmod(anim_time + dt, 60.0f);
 	}
 
+	if (scene_vertices.handle != VK_NULL_HANDLE)
+	{
+		// std::cout << "[Tutorial.cpp]: Number of drivers in the scene: " << scene_S72.drivers.size() << std::endl;
+		// apply drivers
+		for (const S72::Driver &drv : scene_S72.drivers) {
+			apply_driver(drv, anim_time);
+		}
+		// Scene cameras use frozen WORLD_FROM_CAMERA unless we refresh from the animated node graph.
+		if (!scene_cameras.empty()) {
+			refresh_scene_cameras();
+		}
+	}
+
 	{	// handle camera mode
 		if (camera_mode == CameraMode::Scene) {	// SCENE
 			//  current scene camera
@@ -1766,12 +1779,6 @@ void Tutorial::update(float dt) {
 		// scene loaded: create instances from scene meshes
 		if (scene_vertices.handle != VK_NULL_HANDLE)
 		{	
-			// std::cout << "[Tutorial.cpp]: Number of drivers in the scene: " << scene_S72.drivers.size() << std::endl;
-			// apply drivers
-			for (const S72::Driver &drv : scene_S72.drivers) {
-				apply_driver(drv, anim_time);
-			}
-			
 			// traverse scene graph to compute proper world transforms and push object instances
 			for (auto& root : scene_S72.scene.roots)
 			{

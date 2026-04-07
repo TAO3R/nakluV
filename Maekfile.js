@@ -77,7 +77,7 @@ main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[.
 // }
 
 // const main_exe = maek.LINK([...main_objs, ...prebuilt_objs], 'bin/main');
-const main_exe = maek.LINK([...main_objs], 'bin/main');
+const main_exe = maek.LINK([...main_objs], 'bin/viewer');
 
 //default targets:
 maek.TARGETS = [main_exe];
