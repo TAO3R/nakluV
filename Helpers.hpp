@@ -61,8 +61,15 @@ struct Helpers {
 		Allocation allocation;
 
 		//NOTE: could define default constructor, move constructor, move assignment, destructor for a bit more paranoia
+
+		// A2-env, cubemap support
+		uint32_t arrayLayers = 1;
 	};
 	AllocatedImage create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map = Unmapped);
+
+	// A2-env, cubemap support
+	AllocatedImage create_cube_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map = Unmapped);
+
 	void destroy_image(AllocatedImage &&allocated_image); 
 	
 
@@ -72,6 +79,9 @@ struct Helpers {
 	// NOTE: synchronizes *hard* against the GPU; inefficient to use for streaming data!
 	void transfer_to_buffer(void const *data, size_t size, AllocatedBuffer &target);
 	void transfer_to_image(void const *data, size_t size, AllocatedImage &image); //NOTE: image layout after call is VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+
+	// A2-env, cubemap support
+	void transfer_to_cube_image(void const *data, size_t size, AllocatedImage &image);
 
 	VkCommandPool transfer_command_pool = VK_NULL_HANDLE;
 	VkCommandBuffer transfer_command_buffer	= VK_NULL_HANDLE;

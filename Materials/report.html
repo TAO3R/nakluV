@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<!-- saved from url=(0070)https://graphics.cs.cmu.edu/courses/15-472-s26/A2/report-template.html -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<title>15-472-s26: A2 - Materials</title>
+<style>
+/* feel free to style your report in a fancier way! */
+
+@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;700&Anonymous+Pro&display=swap');
+
+html {
+	background:#505055;
+}
+
+body {
+	font-family: 'Quicksand', sans-serif;
+	color:#000;
+	background:#eeeee8;
+	font-size:15px;
+	margin: 1em auto 50vh auto;
+	padding: 1em 2em 1em 2em;
+	max-width:45em;
+	border-radius:4px;
+	box-shadow:0 0 10px #0008;
+}
+
+h1 { font-size: 20px; font-weight: 700; }
+h2 { font-size: 16px; font-weight: 700; }
+h3 { font-size: 16px; font-weight: 400; }
+h4 { font-size: 14px; font-weight: 400; }
+
+h1, h2, h3, h4 {
+	margin: 15px 0 0 -10px;
+}
+
+p {
+	margin: 5px 0 0 0;
+}
+
+figure {
+	margin: 10px -2em;
+	padding: 10px 2em;
+	width:100%;
+	background:#e8e8e8;
+}
+
+figcaption {
+	font-size:14px;
+	font-style:italic;
+}
+
+.subtitle {
+	display:block;
+	font-size:16px;
+	font-weight:400;
+}
+
+.placeholder {
+	color:#800;
+	font-style:italic;
+}
+
+kbd {
+	display:inline-block;
+	background:#ccc;
+	color:#444;
+	font-style:normal;
+	font-weight:700;
+	border-radius:8px;
+	padding:1px 6px;
+	margin:1px;
+	border:1.5px solid #aaa;
+}
+
+code {
+	font-family: 'Anonymous Pro', monospace;
+	background: #222;
+	color:#fff;
+	border-radius:4px;
+	padding:2px 4px;
+	margin:1px;
+}
+
+code var {
+	color:#ef5;
+	font-style:italic;
+}
+
+.atag {
+	font-family: 'Calistoga', serif;
+	font-size:90%;
+	color:#000;
+	background:#e17dcd;
+
+	display:inline-block;
+	padding:1px 4px;
+	border-radius: 4px;
+	line-height:120%;
+}
+.atag:before {
+	content:'»';
+}
+.atag.extra {
+	background:#c6aff8;
+}
+.atag.creative {
+	background:linear-gradient(0.35turn, #fcacff, #f9ab93, #76a1e4, #20953d);
+}
+
+</style>
+<!-- Load Chart.js for creating charts (documentation https://www.chartjs.org/docs/latest/ ) -->
+<script src="./report_files/chart.js.download"></script>
+</head>
+<body>
+<h1>A2: Materials
+<span class="subtitle">by <span class="placeholder">Jim McCann (jmccann)</span></span>
+</h1>
+
+<!-- of course, delete these class="placeholder" notes in your report: -->
+
+<p class="placeholder">
+Summarize, in about one paragraph, your approach to the materials assignment.
+How did you structure your code?
+What's cool about it? Are there parts you weren't able to complete?
+</p>
+
+<h2>My Model <span class="atag creative">A2-create</span></h2>
+
+<p class="placeholder">
+Describe the model and texture you created and include a screen recording showing it running in real-time:
+</p>
+
+<video>
+<!--
+  you can use the 'video' element to show your code running
+  Learn more at:
+    https://developer.mozilla.org/en-US/docs/Web/HTML/Element/video
+
+  Example: put the video file in a path near this .html
+  <source src="path/to/video" type="video/mp4" />
+-->
+</video>
+
+<p class="placeholder">
+Describe your creation process for the model and texture.
+</p>
+
+<h2>Using the Cube Utility</h2>
+
+<p class="placeholder">Provide a short overview of how to use your cube utility.</p>
+
+<h3>Command-line Arguments (Cube Utility)</h3>
+
+<p class="placeholder">
+Document the command-line arguments that can be used to control your cube utility.
+Include both the command-line arguments required by the assignment statement and any additional arguments or functions you decided to add.
+</p>
+
+<ul>
+<li class="placeholder"><code>--lambertian <var>out.png</var></code> -- compute lambertian cube map and store as RGBE8 in <code><var>out.png</var></code></li>
+<li class="placeholder">...</li>
+</ul>
+
+<h3>Command-line Arguments (Viewer)</h3>
+
+<p class="placeholder">
+Document the command-line arguments that can be used to control your viewer.
+This will probably be a copy of the section from your A1 report with a few new flags relating to tone mapping.
+</p>
+
+<h2>Evidence</h2>
+
+<p class="placeholder">
+The purpose of this section is to get you to think critically about your code by providing evidence sufficient to demonstrate to course staff that it works.
+These thoughts may also help you improve the code as you work on it in A3 and beyond.
+</p>
+
+
+<h3>Environment Loading and Display <span class="atag">A2-env</span></h3>
+
+<p class="placeholder">
+What functions and data structures in your code are involved with loading environment cube maps and converting them from RGBE8 format to the format you chose to use for them on-GPU?
+(And what format did you choose for that?).
+
+<br>
+cubemap helper function support
+
+<br>
+Load cubemap faces from disk
+
+<br>
+Decode RGBE to HDR
+
+<br>
+upload
+
+</p>
+
+<p class="placeholder">
+Provide evidence that your code can load environment maps and display <code>"environment"</code> and <code>"mirror"</code> materials.
+</p>
+
+<h3>Tone Mapping <span class="atag">A2-tone</span></h3>
+
+<p class="placeholder">
+Describe, in a few sentences, how your display code deals with tone mapping, and what you chose for your custom non-linear tone mapping curve.
+</p>
+
+<p class="placeholder">
+Provide evidence that your tone mapping and exposure controls work.
+</p>
+
+<p class="placeholder">
+Plot your tone-mapping curve:
+</p>
+
+<figure>
+<!-- Feel free to use and duplicate the below example graph to plot data
+ 	 Edit labels and variables in script below the canvas -->
+<canvas id="A2-tone-curve" style="display: block; width: 600px; max-width: 600px; margin: 0px auto; background: rgb(255, 255, 255); box-sizing: border-box; height: 300px;" width="1125" height="562"></canvas>
+<figcaption>
+The result of (my tone-mapping curve) applied to a color of increasing intensity.
+</figcaption>
+<script>
+//adding an event listener so that this chart gets made *after* the document loads:
+window.addEventListener('load', () => {
+	//in a real workload these arrays would be a lot longer:
+	// you might even want to write a for() loop in javascript to make them
+	const intensity  = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6];
+	const outR       = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.0, 1.0, 1.0];
+	const outG       = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+	const outB       = [0.0,0.02,0.04,0.06,0.08, 0.1,0.12,0.14,0.16];
+	//if your tone mapping handles color channels separately
+
+	// Chart.js supports many types of charts and configuration options.
+	//   See: https://www.chartjs.org/docs/latest/
+	new Chart("A2-tone-curve", {
+		type: "line",
+		data: {
+			labels: intensity,
+			datasets: [
+				{ label: "red", data: outR, backgroundColor:'#f00', borderColor:'#f00' },
+				{ label: "green", data: outG, backgroundColor:'#0f0', borderColor:'#0f0' },
+				{ label: "blue", data: outB, backgroundColor:'#00f', borderColor:'#00f' },
+			]
+		},
+		options: {
+			plugins: {
+				title: { display: true, text: "Tone Mapping intenisty * (1.0, 0.5, 0.1)" }, //show a chart title
+				legend: { display: true, onClick:()=>{} }, //show legend but don't allow interacting
+			},
+			scales: {
+				y:{
+					min:0, //having y-axis start at zero provides better relative view of data
+					title: { display:true, text:"output intensity" },
+				},
+				x:{
+					title: { display:true, text:"intensity" },
+				},
+			},
+			animation:false, //don't animate in the data sets
+		}
+	});
+});
+</script>
+</figure>
+
+
+
+
+<h3>Lambertian Diffuse <span class="atag">A2-diffuse</span></h3>
+
+<p class="placeholder">
+Where and how does your code implement the <code>"lambertian"</code> material?
+</p>
+
+<p class="placeholder">
+Provide evidence that your Lambertain cube-map pre-filtering works.
+Provide evidence that your <code>"lambertian"</code> material works.
+</p>
+
+<p class="placeholder">
+Plot timings for your Lambertian cube map pre-filtering as applied to various cube sizes.
+</p>
+
+<h3>Normal Mapping <span class="atag">A2-normal</span></h3>
+
+<p class="placeholder">
+Where and how does your code implement the normal mapping? (Both the texture loading and the usage in materials.)
+</p>
+
+<p class="placeholder">
+Provide evidence that your normal mapping works properly.
+</p>
+
+<p class="placeholder">
+What, if any, is the performance impact of normal mapping in your viewer?
+Can you make normal mapping a bottleneck? (I'm not actually sure if you can! Asking this one out of curiosity to see what you try.) If so, please include the scene.
+</p>
+
+<h3>Physically-Based Material <span class="atag">A2-pbr</span></h3>
+
+<p class="placeholder">
+Where and how does your code implement the <code>"pbr"</code> material?
+How did you implement the integration required to pre-filter cube maps?
+Where does your code precompute and load the "environment BRDF" (the second part of the split sum), and how is it stored?
+</p>
+
+<p class="placeholder">
+Provide evidence that your <code>"pbr"</code> material works properly.
+</p>
+
+<p class="placeholder">
+Provide evidence that your cube utility is able to correctly pre-filter cube maps with the cosine-weighted GGX normal distribution function.
+You may wish to, e.g., show that no energy is lost.
+</p>
+
+<p class="placeholder">
+Provide evidence that your cube utility is able to correctly pre-integrate the environment BRDF part of the split sum.
+(E.g., an image of the precomputed table to compare to the one presented by Karis.)
+</p>
+
+<p class="placeholder">
+Provide charts of timings characterizing the performance of your cube utility.
+</p>
+
+<h3>Displacement Mapping <span class="atag">A2x-displacement</span></h3>
+
+<p class="placeholder">
+How did you implement displacement mapping?
+</p>
+
+<p class="placeholder">
+What is the performance impact of using displacement mapping in a scene?
+Include charts or tables and an example scene where displacement mapping is a bottleneck.
+</p>
+
+<h2>Feedback</h2>
+<p class="placeholder">
+This is the end of the structured report. Feel free to add feedback about A1 to this section.
+</p>
+
+
+
+</body></html>

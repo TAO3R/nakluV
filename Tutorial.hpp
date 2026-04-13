@@ -206,6 +206,7 @@ struct Tutorial : RTG::Application {
 		ObjectVertices vertices;
 		ObjectsPipeline::Transform transform;
 		uint32_t texture = 0;	// an index that indicates which texture descriptor to bind when drawing each instance
+		MaterialType material_type = MaterialType::Lambertian;
 	};
 	std::vector<ObjectInstance> object_instances;
 
@@ -482,4 +483,28 @@ struct Tutorial : RTG::Application {
 
 	/** Stores the time value for sampling animations */
 	float anim_time = 0.0f;
+
+	//--------------------------------------------------------------------
+	// A2-Materials:
+
+	// ENV
+
+	/** GPU cubemap image for the environment radiance */
+	Helpers::AllocatedImage environment_cubemap;
+	VkImageView environment_cubemap_view = VK_NULL_HANDLE;
+	VkSampler environment_cubemap_sampler = VK_NULL_HANDLE;
+
+	/**
+	 * Called within the constructor of Tutorial
+	 * Loads enviornment cubemaps for environments in a scene
+	 */
+	void load_enviornment_cubemap();
+
+	/** Material types for shader dispatch */
+	enum class MaterialType : uint32_t {
+		Lambertian  = 0,
+		Environment = 1,
+		Mirror      = 2,
+		PBR         = 3,
+	};
 };

@@ -204,11 +204,13 @@ void Tutorial::build_scene_materials()
 		}
 		else if (std::holds_alternative<S72::Material::Mirror>(it.second.brdf))
 		{
-
+			// A2-env
+			mat_to_tex[&it.second] = UINT32_MAX;	// sentinel: no 2D texture
 		}
 		else if (std::holds_alternative<S72::Material::Environment>(it.second.brdf))
 		{
-			
+			// A2-env
+			mat_to_tex[&it.second] = UINT32_MAX;	// sentinel: no 2D texture
 		}
 		else
 		{
@@ -256,6 +258,27 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 					}
 				}
 
+				MaterialType mat_type = MaterialType::Lambertian;
+				if (const auto *mat = it->second.material)
+				{
+					if (std::holds_alternative<S72::Material::Mirror>(mat->brdf))
+					{
+						mat_type = MaterialType::Mirror;
+					}
+					else if (std::holds_alternative<S72::Material::Environment>(mat->brdf))
+					{
+						mat_type = MaterialType::Environment;
+					}
+					else if (std::holds_alternative<S72::Material::PBR>(mat->brdf))
+					{
+						mat_type = MaterialType::PBR;
+					}
+					else
+					{
+
+					}
+				}
+
 				object_instances.emplace_back(ObjectInstance{
 					.vertices = it->second.vertices,
 					.transform {
@@ -264,6 +287,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 						.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
 					},
 					.texture = tex,
+					.material_type = mat_type,
 				});
 			}
 			else if (culling_mode == CullingMode::Frustum)
@@ -289,6 +313,27 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 						}
 					}
 
+					MaterialType mat_type = MaterialType::Lambertian;
+					if (const auto *mat = it->second.material)
+					{
+						if (std::holds_alternative<S72::Material::Mirror>(mat->brdf))
+						{
+							mat_type = MaterialType::Mirror;
+						}
+						else if (std::holds_alternative<S72::Material::Environment>(mat->brdf))
+						{
+							mat_type = MaterialType::Environment;
+						}
+						else if (std::holds_alternative<S72::Material::PBR>(mat->brdf))
+						{
+							mat_type = MaterialType::PBR;
+						}
+						else
+						{
+							
+						}
+					}
+
 					object_instances.emplace_back(ObjectInstance{
 						.vertices = it->second.vertices,
 						.transform {
@@ -297,6 +342,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 							.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
 						},
 						.texture = tex,
+						.material_type = mat_type,
 					});
 
 					// push WorldBounds to object_bounds
