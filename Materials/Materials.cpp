@@ -182,7 +182,7 @@ void Helpers::transfer_to_cube_image(void const *data, size_t size, Helpers::All
 	destroy_buffer(std::move(transfer_src));
 }
 
-void Tutorial::load_enviornment_cubemap()
+void Tutorial::load_environment_cubemap()
 {
 	if (scene_S72.environments.empty()) {
 		std::cout << "[Materials.cpp]: No environment found in scene." << std::endl;

@@ -115,6 +115,9 @@ struct Tutorial : RTG::Application {
 		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set2_Texture = VK_NULL_HANDLE;
 
+		// A2-env
+		VkDescriptorSetLayout set3_Cubemap = VK_NULL_HANDLE;
+
 		// types for descriptors:
 		struct World {
 			struct {float x, y, z, padding_;} SKY_DIRECTION;
@@ -131,7 +134,8 @@ struct Tutorial : RTG::Application {
 		};
 		static_assert(sizeof(Transform) == 16*4 + 16 * 4 + 16 * 4, "Transform is the expected size.");
 
-		// no push constants
+		// A2-env: `material_type` and camera eye position push constants
+		struct Push;
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 
@@ -201,6 +205,9 @@ struct Tutorial : RTG::Application {
 	std::vector<LinesPipeline::Vertex> lines_vertices;
 
 	ObjectsPipeline::World world;
+
+	// A2-env: forward declaration
+	enum class MaterialType : uint32_t;
 
 	struct ObjectInstance {
 		ObjectVertices vertices;
@@ -498,7 +505,7 @@ struct Tutorial : RTG::Application {
 	 * Called within the constructor of Tutorial
 	 * Loads enviornment cubemaps for environments in a scene
 	 */
-	void load_enviornment_cubemap();
+	void load_environment_cubemap();
 
 	/** Material types for shader dispatch */
 	enum class MaterialType : uint32_t {
@@ -507,4 +514,16 @@ struct Tutorial : RTG::Application {
 		Mirror      = 2,
 		PBR         = 3,
 	};
+
+	/** Descriptors for environment cubemap */
+	VkDescriptorSet environment_cubemap_descriptors = VK_NULL_HANDLE;
+
+	/** Push constant for `material_type` and camera eye position */
+	struct ObjectsPipeline::Push {
+		uint32_t material_type;	// 0 = Lambertian, 1 = Environment, 2 = Mirror, 3 = PBR
+		float eye_x, eye_y, eye_z;
+	};
+
+	/** Camera eye position */
+	float eye_x, eye_y, eye_z;
 };

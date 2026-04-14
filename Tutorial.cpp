@@ -689,21 +689,28 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		};
 		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &texture_sampler) );
 	}
-		
+
+	{	// A2-env: load environment cubemap
+		load_environment_cubemap();
+	}
+
 	{ // create the texture descriptor pool
 		uint32_t per_texture = uint32_t(textures.size()); //for easier-to-read counting
+
+		// A2-env: make room for the cubemap descriptor
+		uint32_t has_cubemap = (environment_cubemap_view == VK_NULL_HANDLE) ? 0 : 1;
 
 		std::array< VkDescriptorPoolSize, 1> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = 1 * 1 * per_texture, //one descriptor per set, one set per texture
+				.descriptorCount = 1 * 1 * per_texture + has_cubemap, //one descriptor per set, one set per texture, plus cubemap if exists
 			},
 		};
 		
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0, //because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors allocated from this pool
-			.maxSets = 1 * per_texture, //one set per texture
+			.maxSets = 1 * per_texture + has_cubemap, //one set per texture plus cubemap if exists
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -750,6 +757,35 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 		vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
 	}
+
+	{	// A2-env: allocate and write environment cubemap descriptors
+		if (environment_cubemap_view != VK_NULL_HANDLE)
+		{
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = texture_descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set3_Cubemap,
+			};
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &environment_cubemap_descriptors) );
+
+			VkDescriptorImageInfo image_info{
+				.sampler = environment_cubemap_sampler,
+				.imageView = environment_cubemap_view,
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+			VkWriteDescriptorSet write{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = environment_cubemap_descriptors,
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &image_info,
+			};
+			vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
+		}
+	}
 }	// end of Tutorial constructor
 
 // Destructor
@@ -784,6 +820,23 @@ Tutorial::~Tutorial() {
 		rtg.helpers.destroy_image(std::move(texture));
 	}
 	textures.clear();
+
+	// A2-env: cubemap cleanup
+	if (environment_cubemap_sampler != VK_NULL_HANDLE)
+	{
+		vkDestroySampler(rtg.device, environment_cubemap_sampler, nullptr);
+		environment_cubemap_sampler = VK_NULL_HANDLE;
+	}
+	if (environment_cubemap_view != VK_NULL_HANDLE)
+	{
+		vkDestroyImageView(rtg.device, environment_cubemap_view, nullptr);
+		environment_cubemap_view = VK_NULL_HANDLE;
+	}
+	if (environment_cubemap.handle != VK_NULL_HANDLE)
+	{
+		rtg.helpers.destroy_image(std::move(environment_cubemap));
+		environment_cubemap.handle = VK_NULL_HANDLE;
+	}
 
 	rtg.helpers.destroy_buffer(std::move(object_vertices));
 
@@ -1263,6 +1316,19 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					0, nullptr	// dynamic offsets count, ptr
 				);
 			}
+
+			{	// A2-env: bind cubemap descriptor set
+				if (environment_cubemap_view != VK_NULL_HANDLE)
+				{
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						objects_pipeline.layout,
+						3, 1, &environment_cubemap_descriptors,
+						0, nullptr
+					);
+				}
+			}
 		
 			// draw all instances:
 			for (ObjectInstance const &inst : object_instances) {
@@ -1273,8 +1339,22 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					VK_PIPELINE_BIND_POINT_GRAPHICS,	// pipeline bind point
 					objects_pipeline.layout,	// pipeline layout
 					2,	// second set
-					1, &texture_descriptors[inst.texture],	// descriptor sets count, prt
+					1, &texture_descriptors[inst.texture],	// descriptor sets count, ptr
 					0, nullptr	// dynamic offsets count, ptr
+				);
+
+				// A2-env: push `material_type` and camera eye position constants
+				ObjectsPipeline::Push push{
+					.material_type = static_cast<uint32_t>(inst.material_type),
+					.eye_x = eye_x,
+					.eye_y = eye_y,
+					.eye_z = eye_z,
+				};
+				vkCmdPushConstants(
+					workspace.command_buffer,
+					objects_pipeline.layout,
+					VK_SHADER_STAGE_FRAGMENT_BIT,
+					0, sizeof(push), &push
 				);
 
 				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
@@ -1353,6 +1433,11 @@ void Tutorial::update(float dt) {
 				persp.far
 			) * mat4_inverse(sc.WORLD_FROM_CAMERA);
 
+			// A2-env: extract eye position from the camera's world transform (column-major, translation is column 3)
+			eye_x = sc.WORLD_FROM_CAMERA[12];
+			eye_y = sc.WORLD_FROM_CAMERA[13];
+			eye_z = sc.WORLD_FROM_CAMERA[14];
+
 			// set culling matrix
 			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
 		} else if (camera_mode == CameraMode::User) {	// USER
@@ -1365,6 +1450,15 @@ void Tutorial::update(float dt) {
 				free_camera.target_x, free_camera.target_y, free_camera.target_z,
 				free_camera.azimuth, free_camera.elevation, free_camera.radius
 			);
+
+			// A2-env: eye = target + radius * out_direction (same formula as orbit())
+			float ce = std::cos(free_camera.elevation);
+			float se = std::sin(free_camera.elevation);
+			float ca = std::cos(free_camera.azimuth);
+			float sa = std::sin(free_camera.azimuth);
+			eye_x = free_camera.target_x + free_camera.radius * ce * ca;
+			eye_y = free_camera.target_y + free_camera.radius * ce * sa;
+			eye_z = free_camera.target_z + free_camera.radius * se;
 
 			// set culling matrix
 			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
@@ -1379,6 +1473,15 @@ void Tutorial::update(float dt) {
 				debug_camera.target_x, debug_camera.target_y, debug_camera.target_z,
 				debug_camera.azimuth, debug_camera.elevation, debug_camera.radius
 			);
+
+			// A2-env: eye from debug orbit camera
+			float ce = std::cos(debug_camera.elevation);
+			float se = std::sin(debug_camera.elevation);
+			float ca = std::cos(debug_camera.azimuth);
+			float sa = std::sin(debug_camera.azimuth);
+			eye_x = debug_camera.target_x + debug_camera.radius * ce * ca;
+			eye_y = debug_camera.target_y + debug_camera.radius * ce * sa;
+			eye_z = debug_camera.target_z + debug_camera.radius * se;
 
 			// culling uses the previous camera's clip matrix
 

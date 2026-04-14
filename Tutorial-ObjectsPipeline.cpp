@@ -42,7 +42,7 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 	}
 
 	{	// the set1_Transforms layout holds an array of Transform structures in a storage buffer used in the vertex shader:
-		std::array<VkDescriptorSetLayoutBinding, 1> bindings{
+		std::array< VkDescriptorSetLayoutBinding, 1> bindings{
 			VkDescriptorSetLayoutBinding{
 				.binding = 0,
 				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -60,7 +60,7 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 		VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set1_Transforms));
 	}
 
-    {   // the set2_TEXTURE layout has a single descriptor for a sampler2D used in the fragment shader:
+    {   // the set2_Texture layout has a single descriptor for a sampler2D used in the fragment shader:
         std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
 			VkDescriptorSetLayoutBinding{
 				.binding = 0,
@@ -78,20 +78,47 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 
 		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set2_Texture) );
     }
+
+	{	// the set3_Cubemap layout has a single combined cubemap sampler for environment/mirror
+		std::array< VkDescriptorSetLayoutBinding, 1> bindings{
+			VkDescriptorSetLayoutBinding{
+				.binding = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
+		};
+
+		VkDescriptorSetLayoutCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.bindingCount = uint32_t(bindings.size()),
+			.pBindings = bindings.data(),
+		};
+
+		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set3_Cubemap) );
+	}
     
 	{	// create pipeline layout
-		std::array<VkDescriptorSetLayout, 3 > layouts{
+		std::array<VkDescriptorSetLayout, 4 > layouts{
 			set0_World,
             set1_Transforms,
             set2_Texture,
+			set3_Cubemap,	// A2-env
+		};
+
+		// A2-env: `materaial_type` and camera eye position push constants
+		VkPushConstantRange push_range{
+			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			.offset = 0,
+			.size = sizeof(ObjectsPipeline::Push),
 		};
 
 		VkPipelineLayoutCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,	// want this push constant to be accessible in the fragment shader
 			.setLayoutCount = uint32_t(layouts.size()),
 			.pSetLayouts = layouts.data(),
-			.pushConstantRangeCount = 0,
-			.pPushConstantRanges = nullptr,
+			.pushConstantRangeCount = 1,
+			.pPushConstantRanges = &push_range,	// A2-env
 		};
 
 		VK(vkCreatePipelineLayout(rtg.device, &create_info, nullptr, &layout));
@@ -223,6 +250,12 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 
 void Tutorial::ObjectsPipeline::destroy(RTG& rtg) {
 	// refsol::BackgroundPipeline_destroy(rtg, &layout, &handle);
+
+	// A2-env: cubemap cleanup
+	if (set3_Cubemap != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, set3_Cubemap, nullptr);
+		set3_Cubemap = VK_NULL_HANDLE;
+	}
 
 	if (set2_Texture != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(rtg.device, set2_Texture, nullptr);
