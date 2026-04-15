@@ -178,7 +178,7 @@ These thoughts may also help you improve the code as you work on it in A3 and be
 
 <h3>Environment Loading and Display <span class="atag">A2-env</span></h3>
 
-<p class="placeholder">
+<p>
 <!-- What functions and data structures in your code are involved with loading environment cube maps and converting them from RGBE8 format to the format you chose to use for them on-GPU?
 (And what format did you choose for that?). -->
 
@@ -190,34 +190,69 @@ I defined <code>Helpers::create_cube_image</code> that creates a <code>VkImage</
 I defined <code>Helpers::transfer_to_cube_image</code> that stages and copies 6 faces into the cube image and transitions it for shader sampling.
 
 <!-- <br>
-cubemap helper function support
+cubemap helper function support <br>
+<code>Helpers::AllocatedImage::arrayLayers</code> was added so images can represent cubemaps (<code>arrayLayers = 6</code> for cubemap images). <br>
+Implemented <code>Helpers::create_cube_image</code> and <code>Helpers::transfer_to_cube_image</code> to mirror the existing 2D image helpers but for cubemaps: <br>
+create: <coed>VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT</code>, <code>arrayLayers=6</code>, <code>VK_IMAGE_TYPE_2D</code> <br>
+transfer: copies 6 layers and uses barriers with <code>layerCount = 6</code> <br>
 
 <br>
-Load cubemap faces from disk
+Load cubemap faces from disk <br>
+Implemented in <code>Tutorial::load_environment_cubemap</code> using <code>stb_image</code> (<code>stbi_load</code>) to load the environment PNG from disk. <br>
+The environment image is a single vertical strip containing 6 faces; the function validates dimensions and then slices it into 6 faces in CPU memory. <br>
 
 <br>
-Decode RGBE to HDR
+Decode RGBE to HDR <br>
+In <code>Tutorial::load_environment_cubemap</code>, the loaded 8-bit RGBE pixels are decoded on CPU into float HDR. <br>
+Each pixel’s RGB is converted from RGBE using the exponent channel to scale RGB into linear HDR radiance values, and stored as float RGBA (A set to 1.0). <br>
 
 <br>
-upload
+upload <br>
+<code>Tutorial::load_environment_cubemap</code> creates <code>environment_cubemap</code> via <code>rtg.helpers.create_cube_image</code> with <code>VK_FORMAT_R32G32B32A32_SFLOAT</code>. <br>
+The decoded float buffer (6 faces packed) is uploaded via <code>rtg.helpers.transfer_to_cube_image</code>. <br>
+Then it creates: <br>
+<code>environment_cubemap_view</code>: <code>VK_IMAGE_VIEW_TYPE_CUBE</code> <br>
+<code>environment_cubemap_sampler</code>: linear filtering + clamp-to-edge (cubemap-friendly) <br>
 
 <br>
-add descriptor set binding for the cubemap + sampler in the objects pipeline
+add descriptor set binding for the cubemap + sampler in the objects pipeline <br>
+Added a new descriptor set layout in the objects pipeline for the cubemap (set 3) with a <code>VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER</code> binding. <br>
+In Tutorial: <br>
+extended the texture descriptor pool to reserve one extra combined image/sampler descriptor when the cubemap exists <br>
+allocated <code>environment_cubemap_descriptors</code> <br>
+wrote the descriptor with <code>{ imageView = environment_cubemap_view, sampler = environment_cubemap_sampler, imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }</code> <br>
+In the draw code, bound set 3 when the cubemap exists. <br>
 
 <br>
-pass <code>material_type</code> and camera eye position to the shader (push constant or uniform)
+pass <code>material_type</code> and camera eye position to the shader (push constant or uniform) <br>
+Added a push constant struct <code>ObjectsPipeline::Push</code> (in the objects pipeline code) that contains: <br>
+<code>material_type</code> <br>
+<code>eye_x</code>, <code>eye_y</code>, <code>eye_z</code> <br>
+Updated pipeline layout to include a push constant range. <br>
+In <code>Tutorial::render</code>, for each object instance: <br>
+sets <code>material_type</code> from the instance’s material classification <br>
+pushes current camera eye position (computed in <code>Tutorial::update</code>) <br>
 
 <br>
-write the fragment shader logic to sample the cubemap differently per material type -->
+write the fragment shader logic to sample the cubemap differently per material type <br>
+In <code>objects.frag</code>: <br>
+declared <code>samplerCube CUBEMAP</code> at set 3 <br>
+used <code>material_type</code> to switch behavior: <br>
+Environment: sample the cubemap using surface normal direction (current implementation) <br>
+Mirror: reflect view direction about the normal and sample cubemap along the reflection direction <br>
+Lambertian/PBR: keep existing lighting path (2D texture albedo + sky/sun lighting) <br>
+<br>
+
+-->
 
 </p>
 
-<p class="placeholder">
+<p>
 Provide evidence that your code can load environment maps and display <code>"environment"</code> and <code>"mirror"</code> materials.
-Loading Materials.s72:
+<!-- Loading Materials.s72:
 <video>
 	
-</video>
+</video> -->
 </p>
 
 <h3>Tone Mapping <span class="atag">A2-tone</span></h3>
