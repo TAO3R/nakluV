@@ -16,7 +16,7 @@ layout(set = 3, binding = 0) uniform samplerCube CUBEMAP;
 layout(push_constant) uniform PushConstants {
     uint material_type;
     float eye_x, eye_y, eye_z;
-}
+};
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
@@ -28,12 +28,11 @@ void main() {
     vec3 n = normalize(normal);
     vec3 eye = vec3(eye_x, eye_y, eye_z);   // A2-env
 
-    if (material_type = 1u) // Environment, sample cubemap along the view direction (camera->fragment)
+    if (material_type == 1u) // Environment, sample cubemap along the surface normal
     {
-        vec3 view_dir = normalize(position - eye);
-        outColor = vec4(texture(CUBEMAP, view_dir).rgb, 1.0);
+        outColor = vec4(texture(CUBEMAP, n).rgb, 1.0);
     }
-    else if (material_type = 2u)    // Mirror, reflect the view direction around the surface normal
+    else if (material_type == 2u)    // Mirror, reflect the view direction around the surface normal
     {
         vec3 view_dir = normalize(position - eye);
         vec3 refl = reflect(view_dir, n);

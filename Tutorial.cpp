@@ -1334,14 +1334,16 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			for (ObjectInstance const &inst : object_instances) {
 				uint32_t index = uint32_t(&inst - &object_instances[0]);
 
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,	// command buffer
-					VK_PIPELINE_BIND_POINT_GRAPHICS,	// pipeline bind point
-					objects_pipeline.layout,	// pipeline layout
-					2,	// second set
-					1, &texture_descriptors[inst.texture],	// descriptor sets count, ptr
-					0, nullptr	// dynamic offsets count, ptr
-				);
+				if (inst.texture < uint32_t(texture_descriptors.size())) {
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						objects_pipeline.layout,
+						2,
+						1, &texture_descriptors[inst.texture],
+						0, nullptr
+					);
+				}
 
 				// A2-env: push `material_type` and camera eye position constants
 				ObjectsPipeline::Push push{

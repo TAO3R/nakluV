@@ -241,45 +241,28 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 		auto it = scene_meshes.find(node->mesh->name);
 		if (it != scene_meshes.end())	// found a mesh
 		{	
-			if (culling_mode == CullingMode::None)
+			uint32_t tex = 0;
+			MaterialType mat_type = MaterialType::Lambertian;
+			if (const auto *mat = it->second.material)
 			{
-				// push ObjectInstance to object_instances
-				// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
-				mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
-				
-				// texture index
-				uint32_t tex = 0;
-				if (const auto *mat = it->second.material)
+				auto itt = mat_to_tex.find(mat);
+				if (itt != mat_to_tex.end() && itt->second != UINT32_MAX)
 				{
-					auto itt = mat_to_tex.find(mat);
-					if (itt != mat_to_tex.end())
-					{
-						tex = itt->second;
-					}
+					tex = itt->second;
 				}
 
-				MaterialType mat_type = MaterialType::Lambertian;
-				if (const auto *mat = it->second.material)
-				{
-					if (std::holds_alternative<S72::Material::Mirror>(mat->brdf))
-					{
-						mat_type = MaterialType::Mirror;
-					}
-					else if (std::holds_alternative<S72::Material::Environment>(mat->brdf))
-					{
-						mat_type = MaterialType::Environment;
-					}
-					else if (std::holds_alternative<S72::Material::PBR>(mat->brdf))
-					{
-						mat_type = MaterialType::PBR;
-					}
-					else
-					{
+				if (std::holds_alternative<S72::Material::Mirror>(mat->brdf))
+					mat_type = MaterialType::Mirror;
+				else if (std::holds_alternative<S72::Material::Environment>(mat->brdf))
+					mat_type = MaterialType::Environment;
+				else if (std::holds_alternative<S72::Material::PBR>(mat->brdf))
+					mat_type = MaterialType::PBR;
+			}
 
-					}
-				}
+			mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
 
-				object_instances.emplace_back(ObjectInstance{
+			auto make_instance = [&]() -> ObjectInstance {
+				return ObjectInstance{
 					.vertices = it->second.vertices,
 					.transform {
 						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
@@ -288,66 +271,21 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 					},
 					.texture = tex,
 					.material_type = mat_type,
-				});
+				};
+			};
+
+			if (culling_mode == CullingMode::None)
+			{
+				object_instances.emplace_back(make_instance());
 			}
 			else if (culling_mode == CullingMode::Frustum)
 			{
-				// transform the 8 corners by WORLD_FROM_LOCAL to get world space obb
 				WorldBounds bounds = get_world_bounds(it->second, WORLD_FROM_LOCAL);
 
-				// compare against frustum planes
 				if (is_inside_frustum(bounds))
 				{
-					// push ObjectInstance to object_instances
-					// WORLD_FROM_LOCAL_NORMAL = inverse transpose of WORLD_FROM_LOCAL when non-uniform scale is present
-					mat4 WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL;
-					
-					// texture index
-					uint32_t tex = 0;
-					if (auto *mat = it->second.material)
-					{
-						auto itt = mat_to_tex.find(mat);
-						if (itt != mat_to_tex.end())
-						{
-							tex = itt->second;
-						}
-					}
-
-					MaterialType mat_type = MaterialType::Lambertian;
-					if (const auto *mat = it->second.material)
-					{
-						if (std::holds_alternative<S72::Material::Mirror>(mat->brdf))
-						{
-							mat_type = MaterialType::Mirror;
-						}
-						else if (std::holds_alternative<S72::Material::Environment>(mat->brdf))
-						{
-							mat_type = MaterialType::Environment;
-						}
-						else if (std::holds_alternative<S72::Material::PBR>(mat->brdf))
-						{
-							mat_type = MaterialType::PBR;
-						}
-						else
-						{
-							
-						}
-					}
-
-					object_instances.emplace_back(ObjectInstance{
-						.vertices = it->second.vertices,
-						.transform {
-							.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-							.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-							.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
-						},
-						.texture = tex,
-						.material_type = mat_type,
-					});
-
-					// push WorldBounds to object_bounds
+					object_instances.emplace_back(make_instance());
 					object_bounds.push_back(bounds);
-
 					assert(object_instances.size() == object_bounds.size() && "Size mismatch between object instances and bounds.");
 				}
 			}
