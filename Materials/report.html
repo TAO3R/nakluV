@@ -179,10 +179,17 @@ These thoughts may also help you improve the code as you work on it in A3 and be
 <h3>Environment Loading and Display <span class="atag">A2-env</span></h3>
 
 <p class="placeholder">
-What functions and data structures in your code are involved with loading environment cube maps and converting them from RGBE8 format to the format you chose to use for them on-GPU?
-(And what format did you choose for that?).
+<!-- What functions and data structures in your code are involved with loading environment cube maps and converting them from RGBE8 format to the format you chose to use for them on-GPU?
+(And what format did you choose for that?). -->
 
-<br>
+I chose <code>VK_FORMAT_R32G32B32A32_SFLOAT</code>(RGBA 32-bit float per channel) as the on-GPU format. This is what the decoded HDR data is uploaded as.
+I defined <code>Tutorial::load_environment_cubemap</code> that loads the RGBE8 PNG, converts it to float HDR RGBA, creates the cubemap image, uploads it, then creates <code>environment_cubemap_view</code>
++<code>environment_cubemap_sampler</code>.
+I defined a <code>environment_cubemap</code> to store the cubemap as <code>Helpers::AllocatedImage</code> with <code>arrayLayers</code> support added for cubemaps.
+I defined <code>Helpers::create_cube_image</code> that creates a <code>VkImage</code> with <code>VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT</code> and <code>arrayLayers = 6</code>.
+I defined <code>Helpers::transfer_to_cube_image</code> that stages and copies 6 faces into the cube image and transitions it for shader sampling.
+
+<!-- <br>
 cubemap helper function support
 
 <br>
@@ -201,12 +208,14 @@ add descriptor set binding for the cubemap + sampler in the objects pipeline
 pass <code>material_type</code> and camera eye position to the shader (push constant or uniform)
 
 <br>
-wirte the fragment shader logic to sample the cubemap differently per material type
+write the fragment shader logic to sample the cubemap differently per material type -->
 
 </p>
 
 <p class="placeholder">
 Provide evidence that your code can load environment maps and display <code>"environment"</code> and <code>"mirror"</code> materials.
+Loading Materials.s72:
+
 </p>
 
 <h3>Tone Mapping <span class="atag">A2-tone</span></h3>
