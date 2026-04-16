@@ -66,6 +66,14 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			if (argi + 1 >= argc || scene_file.empty()) throw std::runtime_error("--cull requires a parameter (a culling mode name) and a scene file.");
 			argi += 1;
 			culling_mode = argv[argi];
+		} else if (arg == "--exposure") {
+			if (argi + 1 >= argc) throw std::runtime_error("--exposure requires a parameter (a float exponent).");
+			argi += 1;
+			exposure = std::stof(argv[argi]);
+		} else if (arg == "--tone-map") {
+			if (argi + 1 >= argc) throw std::runtime_error("--tone-map requires a parameter (linear, reinhard, ...).");
+			argi += 1;
+			tone_map = argv[argi];
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}

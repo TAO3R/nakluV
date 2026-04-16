@@ -1,1 +1,1 @@
-AVAILABLE 0.016667 D:\CMU\15672\nakluV\saves\gpu_7680_4320.ppm
+AVAILABLE 0.016667 C:\Users\tjin2\Desktop\CMU\15672\nakluV\saves\tone_7680_4320_2_linear.ppm

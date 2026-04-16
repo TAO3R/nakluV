@@ -306,3 +306,123 @@ void Tutorial::load_environment_cubemap()
 		break;
 	}
 }
+
+void Tutorial::load_lambertian_cubemap()
+{
+	if (scene_S72.environments.empty()) return;
+
+	for (auto &[name, env] : scene_S72.environments)
+	{
+		if (env.radiance == nullptr) continue;
+
+		// Derive lambertian cubemap path: replace ".png" with ".lambertian.png"
+		std::string rad_path = env.radiance->path;
+		std::string lamb_path;
+		{
+			auto dot_pos = rad_path.rfind(".png");
+			if (dot_pos != std::string::npos) {
+				lamb_path = rad_path.substr(0, dot_pos) + ".lambertian.png";
+			} else {
+				lamb_path = rad_path + ".lambertian.png";
+			}
+		}
+
+		int img_w = 0, img_h = 0;
+		std::unique_ptr<unsigned char, void(*)(void*)> pixels(
+			stbi_load(lamb_path.c_str(), &img_w, &img_h, nullptr, 4),
+			[](void *p) { stbi_image_free(p); }
+		);
+
+		if (!pixels) {
+			std::cerr << "[Materials.cpp]: Lambertian cubemap not found at '"
+				<< lamb_path << "' (run cube utility to generate it)." << std::endl;
+			return;
+		}
+
+		if (img_w <= 0 || img_h != img_w * 6) {
+			std::cerr << "[Materials.cpp]: Lambertian cubemap dimensions (" << img_w << "x" << img_h
+				<< ") don't match vertical strip (w x 6w)." << std::endl;
+			return;
+		}
+
+		uint32_t face_size = static_cast<uint32_t>(img_w);
+		size_t face_pixels = static_cast<size_t>(face_size) * face_size;
+		size_t total_pixels = face_pixels * 6;
+
+		// Decode RGBE -> RGBA32F (same as environment cubemap)
+		std::vector<float> hdr_data(total_pixels * 4);
+		unsigned char *src = pixels.get();
+		for (size_t i = 0; i < total_pixels; ++i) {
+			uint8_t r = src[i * 4 + 0];
+			uint8_t g = src[i * 4 + 1];
+			uint8_t b = src[i * 4 + 2];
+			uint8_t e = src[i * 4 + 3];
+
+			if (r == 0 && g == 0 && b == 0 && e == 0) {
+				hdr_data[i * 4 + 0] = 0.0f;
+				hdr_data[i * 4 + 1] = 0.0f;
+				hdr_data[i * 4 + 2] = 0.0f;
+			} else {
+				float scale = std::ldexp(1.0f, static_cast<int>(e) - 128) / 256.0f;
+				hdr_data[i * 4 + 0] = (r + 0.5f) * scale;
+				hdr_data[i * 4 + 1] = (g + 0.5f) * scale;
+				hdr_data[i * 4 + 2] = (b + 0.5f) * scale;
+			}
+			hdr_data[i * 4 + 3] = 1.0f;
+		}
+
+		lambertian_cubemap = rtg.helpers.create_cube_image(
+			VkExtent2D{ .width = face_size, .height = face_size },
+			VK_FORMAT_R32G32B32A32_SFLOAT,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		);
+
+		rtg.helpers.transfer_to_cube_image(
+			hdr_data.data(),
+			hdr_data.size() * sizeof(float),
+			lambertian_cubemap
+		);
+
+		VkImageViewCreateInfo view_info{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = lambertian_cubemap.handle,
+			.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
+			.format = VK_FORMAT_R32G32B32A32_SFLOAT,
+			.components{
+				.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+				.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+				.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+				.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+			},
+			.subresourceRange{
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 6,
+			},
+		};
+		VK(vkCreateImageView(rtg.device, &view_info, nullptr, &lambertian_cubemap_view));
+
+		VkSamplerCreateInfo sampler_info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.minLod = 0.0f,
+			.maxLod = 0.0f,
+		};
+		VK(vkCreateSampler(rtg.device, &sampler_info, nullptr, &lambertian_cubemap_sampler));
+
+		std::cout << "[Materials.cpp]: Loaded lambertian cubemap '" << lamb_path
+			<< "' (" << face_size << "x" << face_size << " per face)" << std::endl;
+
+		break;
+	}
+}

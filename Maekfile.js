@@ -60,7 +60,7 @@ main_objs.push( maek.CPP('Tutorial-LinesPipeline.cpp', undefined, { depends:[...
 //uncomment to build objects shaders and pipeline:
 const objects_shaders = [
 	maek.GLSLC('objects.vert'),
-	maek.GLSLC('objects.frag'),
+	maek.GLSLC('objects.frag', undefined, { depends:['Materials/tonemap.glsl'] }),
 ];
 main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
 
@@ -80,8 +80,11 @@ main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[.
 // const main_exe = maek.LINK([...main_objs, ...prebuilt_objs], 'bin/main');
 const main_exe = maek.LINK([...main_objs], 'bin/viewer');
 
+// A2-diffuse: standalone cube convolution utility
+const cube_exe = maek.LINK([maek.CPP('Materials/cube.cpp')], 'bin/cube');
+
 //default targets:
-maek.TARGETS = [main_exe];
+maek.TARGETS = [main_exe, cube_exe];
 
 //- - - - - - - - - - - - - - - - - - - - -
 function custom_flags_and_rules() {

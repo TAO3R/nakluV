@@ -257,12 +257,25 @@ Provide evidence that your code can load environment maps and display <code>"env
 
 <h3>Tone Mapping <span class="atag">A2-tone</span></h3>
 
-<p class="placeholder">
-Describe, in a few sentences, how your display code deals with tone mapping, and what you chose for your custom non-linear tone mapping curve.
+<p>
+<!-- Describe, in a few sentences, how your display code deals with tone mapping, and what you chose for your custom non-linear tone mapping curve. -->
+All fragment radiance values are first multiplied by an exposure factor of 2^E
+(where E defaults to 0, i.e., a multiplier of 1.0) and then passed through a tone mapping operator before being written to the framebuffer.
+The exposure and tone mapping mode are stored in the World uniform buffer and uploaded to the GPU each frame,
+so all material types (Lambertian, environment, mirror) share the same tone mapping path.
+A shared GLSL include file (<code>Materials/tonemap.glsl</code>) provides the <code>apply_tone_map</code> function,
+which is called as the final step in objects.frag before writing outColor.
+
+For the custom non-linear tone mapping operator, I chose the Reinhard operator (<code>c / (1 + c)</code>),
+which maps HDR radiance values into the [0, 1] range by compressing highlights while preserving detail in darker regions.
+It is a simple per-channel operation that gracefully prevents bright areas from clipping to white, making it well-suited for scenes lit by HDR environment probes.
+The operator is selectable via the <code>--tone-map reinhard</code> command-line option.
 </p>
 
 <p class="placeholder">
 Provide evidence that your tone mapping and exposure controls work.
+
+
 </p>
 
 <p class="placeholder">

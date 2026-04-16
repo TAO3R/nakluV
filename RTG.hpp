@@ -87,6 +87,10 @@ struct RTG {
 		bool print_scene = false;		// --print
 		std::string scene_camera = "";	// --camera
 		std::string culling_mode = "";	// --cull
+
+		// A2-tone:
+		float exposure = 0.0f;				// --exposure E (multiplier is 2^E)
+		std::string tone_map = "linear";	// --tone-map linear|reinhard
 	};	
 
 	Configuration configuration; //configuration, as used (might have extra extensions, layers, or flags added)

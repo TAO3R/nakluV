@@ -694,23 +694,29 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		load_environment_cubemap();
 	}
 
+	{	// A2-diffuse: load pre-convolved lambertian cubemap
+		load_lambertian_cubemap();
+	}
+
 	{ // create the texture descriptor pool
 		uint32_t per_texture = uint32_t(textures.size()); //for easier-to-read counting
 
-		// A2-env: make room for the cubemap descriptor
+		// A2-env & A2-diffuse: make room for cubemap descriptors
 		uint32_t has_cubemap = (environment_cubemap_view == VK_NULL_HANDLE) ? 0 : 1;
+		uint32_t has_lambertian = (lambertian_cubemap_view == VK_NULL_HANDLE) ? 0 : 1;
+		uint32_t extra_sets = has_cubemap + has_lambertian;
 
 		std::array< VkDescriptorPoolSize, 1> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = 1 * 1 * per_texture + has_cubemap, //one descriptor per set, one set per texture, plus cubemap if exists
+				.descriptorCount = 1 * 1 * per_texture + extra_sets,
 			},
 		};
 		
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-			.flags = 0, //because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors allocated from this pool
-			.maxSets = 1 * per_texture + has_cubemap, //one set per texture plus cubemap if exists
+			.flags = 0,
+			.maxSets = 1 * per_texture + extra_sets,
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -786,6 +792,35 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
 		}
 	}
+
+	{	// A2-diffuse: allocate and write lambertian cubemap descriptors
+		if (lambertian_cubemap_view != VK_NULL_HANDLE)
+		{
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = texture_descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set4_LambertianCubemap,
+			};
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &lambertian_cubemap_descriptors) );
+
+			VkDescriptorImageInfo image_info{
+				.sampler = lambertian_cubemap_sampler,
+				.imageView = lambertian_cubemap_view,
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+			VkWriteDescriptorSet write{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = lambertian_cubemap_descriptors,
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &image_info,
+			};
+			vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
+		}
+	}
 }	// end of Tutorial constructor
 
 // Destructor
@@ -820,6 +855,23 @@ Tutorial::~Tutorial() {
 		rtg.helpers.destroy_image(std::move(texture));
 	}
 	textures.clear();
+
+	// A2-diffuse: lambertian cubemap cleanup
+	if (lambertian_cubemap_sampler != VK_NULL_HANDLE)
+	{
+		vkDestroySampler(rtg.device, lambertian_cubemap_sampler, nullptr);
+		lambertian_cubemap_sampler = VK_NULL_HANDLE;
+	}
+	if (lambertian_cubemap_view != VK_NULL_HANDLE)
+	{
+		vkDestroyImageView(rtg.device, lambertian_cubemap_view, nullptr);
+		lambertian_cubemap_view = VK_NULL_HANDLE;
+	}
+	if (lambertian_cubemap.handle != VK_NULL_HANDLE)
+	{
+		rtg.helpers.destroy_image(std::move(lambertian_cubemap));
+		lambertian_cubemap.handle = VK_NULL_HANDLE;
+	}
 
 	// A2-env: cubemap cleanup
 	if (environment_cubemap_sampler != VK_NULL_HANDLE)
@@ -1087,7 +1139,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	}
 
 	{	// upload world info:
-		assert(workspace.Camera_src.size == sizeof(world));
+		assert(workspace.World_src.size == sizeof(world));
 
 		// host-side copy into World_src:
 		memcpy(workspace.World_src.allocation.data(), &world, sizeof(world));
@@ -1325,6 +1377,19 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 						VK_PIPELINE_BIND_POINT_GRAPHICS,
 						objects_pipeline.layout,
 						3, 1, &environment_cubemap_descriptors,
+						0, nullptr
+					);
+				}
+			}
+
+			{	// A2-diffuse: bind lambertian cubemap descriptor set
+				if (lambertian_cubemap_view != VK_NULL_HANDLE)
+				{
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						objects_pipeline.layout,
+						4, 1, &lambertian_cubemap_descriptors,
 						0, nullptr
 					);
 				}
@@ -1577,6 +1642,10 @@ void Tutorial::update(float dt) {
 		world.SUN_ENERGY.r = 1.0f;
 		world.SUN_ENERGY.g = 1.0f;
 		world.SUN_ENERGY.b = 0.9f;
+
+		world.exposure_scale = std::exp2(rtg.configuration.exposure);
+		world.tone_map_mode = (rtg.configuration.tone_map == "reinhard") ? 1u : 0u;
+		world.has_lambertian = (lambertian_cubemap_view != VK_NULL_HANDLE) ? 1u : 0u;
 	}
 
 	{	// day/night cycle sun and sky:

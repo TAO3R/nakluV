@@ -118,14 +118,21 @@ struct Tutorial : RTG::Application {
 		// A2-env
 		VkDescriptorSetLayout set3_Cubemap = VK_NULL_HANDLE;
 
+		// A2-diffuse
+		VkDescriptorSetLayout set4_LambertianCubemap = VK_NULL_HANDLE;
+
 		// types for descriptors:
 		struct World {
 			struct {float x, y, z, padding_;} SKY_DIRECTION;
 			struct {float r, g, b, padding_;} SKY_ENERGY;
 			struct {float x, y, z, padding_;} SUN_DIRECTION;
 			struct {float r, g, b, padding_;} SUN_ENERGY;
-		};	// padings are required by the std140 layout, which aligns vec3s on 4-element boundaries.
-		static_assert(sizeof(World) == 4*4 + 4*4 + 4*4 + 4*4, "World is the expected size.");
+			float exposure_scale;		// A2-tone: precomputed 2^E
+			uint32_t tone_map_mode;		// A2-tone: 0=linear, 1=reinhard
+			uint32_t has_lambertian;	// A2-diffuse: 1 if lambertian cubemap is bound
+			float _pad_tone[1];			// std140 alignment to 16 bytes
+		};
+		static_assert(sizeof(World) == 4*4 + 4*4 + 4*4 + 4*4 + 4*4, "World is the expected size.");
 
 		struct Transform  {
 			mat4 CLIP_FROM_LOCAL;
@@ -526,4 +533,25 @@ struct Tutorial : RTG::Application {
 
 	/** Camera eye position */
 	float eye_x, eye_y, eye_z;
+
+	
+	// DIFFUSE
+
+	/** pre-convolved lambertian irradiance cubemap */
+	Helpers::AllocatedImage lambertian_cubemap;
+
+	/** View of the lambertian cubemap */
+	VkImageView lambertian_cubemap_view = VK_NULL_HANDLE;
+
+	/** Sampler for the lambertian cubemap */
+	VkSampler lambertian_cubemap_sampler = VK_NULL_HANDLE;
+	
+	/** Descriptor set for the lambertian cubemap */
+	VkDescriptorSet lambertian_cubemap_descriptors = VK_NULL_HANDLE;
+
+	/**
+	 * Called within the constructor of Tutorial
+	 * Loads pre-convolved lambertian irradiance cubemaps for environments in a scene
+	 */
+	void load_lambertian_cubemap();
 };

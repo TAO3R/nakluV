@@ -76,10 +76,11 @@ void main() {
 	glitchPos += blockOffset * blockGlitch;
 	
 
-	outColor = vec4(
-				glitchPos,
-				abs(sin(0.5 + pushData.time)),
-				1.0);
+	// outColor = vec4(
+	// 			glitchPos,
+	// 			abs(sin(0.5 + pushData.time)),
+	// 			1.0);
+	outColor = vec4(0.0, 0.0, 0.0, 1.0);
 
 
 
