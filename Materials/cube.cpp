@@ -6,6 +6,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -244,11 +245,17 @@ int main(int argc, char **argv) {
 	size_t output_total_pixels = static_cast<size_t>(output_size) * output_size * 6;
 	std::vector<float> output_hdr(output_total_pixels * 3, 0.0f);
 
-	std::cout << "Convolving lambertian (" << output_size << "x" << output_size
-		<< " per face)..." << std::endl;
+	std::cout << "Convolving lambertian (input " << input_face_size << "x" << input_face_size
+		<< ", output " << output_size << "x" << output_size << " per face)..." << std::endl;
+
+	auto t_start = std::chrono::high_resolution_clock::now();
 
 	convolve_lambertian(input_hdr.data(), input_face_size,
 		output_hdr.data(), output_size);
+
+	auto t_end = std::chrono::high_resolution_clock::now();
+	double elapsed_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+	std::cout << "Convolution took " << elapsed_ms << " ms" << std::endl;
 
 	// Encode to RGBE
 	std::vector<uint8_t> output_rgbe(output_total_pixels * 4);

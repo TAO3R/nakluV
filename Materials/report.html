@@ -338,8 +338,52 @@ window.addEventListener('load', () => {
 
 <h3>Lambertian Diffuse <span class="atag">A2-diffuse</span></h3>
 
-<p class="placeholder">
-Where and how does your code implement the <code>"lambertian"</code> material?
+<p>
+<!-- Where and how does your code implement the <code>"lambertian"</code> material? -->
+The lambertian material is implemented across three stages: an offline precomputation utility,
+a runtime loading and GPU resource pipeline, and a fragment shader that dispatches based on material type.
+</p>
+
+<p>
+<b>1. Offline precomputation (<code>Materials/cube.cpp</code>)</b><br>
+A standalone <code>cube</code> utility pre-convolves an environment radiance cubemap into a lambertian irradiance lookup cubemap.
+For each output texel with direction <b>n</b>, it numerically integrates the rendering equation for a perfect diffuse surface:
+<code>E(n) = (1/&pi;) &sum; L(&omega;) &middot; max(dot(n, &omega;), 0) &middot; d&omega;</code>,
+where <code>d&omega;</code> is the solid angle of each input texel, computed using the cube-face Jacobian
+<code>4 / (N&sup2; &middot; (s&sup2; + t&sup2; + 1)<sup>3/2</sup>)</code>.
+The output is a small (default 16&times;16 per face) RGBE-encoded vertical-strip PNG named
+<code>env.lambertian.png</code> for a given <code>env.png</code>, matching the s72 convention.
+</p>
+
+<p>
+<b>2. Runtime loading and GPU plumbing</b><br>
+<code>Tutorial::load_lambertian_cubemap()</code> (in <code>Materials/Materials.cpp</code>) derives the
+<code>.lambertian.png</code> path from the environment's radiance texture path, loads it with stb_image,
+decodes RGBE to RGBA32F, creates a 6-layer cube image via <code>Helpers::create_cube_image</code>,
+uploads it via <code>Helpers::transfer_to_cube_image</code>, and creates a <code>VkImageView</code> (cube type) and <code>VkSampler</code>.
+In the constructor (<code>Tutorial.cpp</code>), the texture descriptor pool is sized to include the lambertian cubemap.
+A <code>VkDescriptorSet</code> is allocated using <code>ObjectsPipeline::set4_LambertianCubemap</code>
+(a <code>COMBINED_IMAGE_SAMPLER</code> layout at set 4, binding 0) and written with the lambertian cubemap view and sampler.
+A <code>has_lambertian</code> flag (<code>uint32_t</code>) is added to the <code>ObjectsPipeline::World</code> uniform struct.
+Each frame in <code>update()</code>, it is set to 1 if the lambertian cubemap was successfully loaded, 0 otherwise.
+During rendering, descriptor set 4 is bound once before the per-instance draw loop when the lambertian cubemap is available.
+</p>
+
+<p>
+<b>3. Fragment shader (<code>objects.frag</code>)</b><br>
+Each instance's <code>material_type</code> is passed via push constants.
+When <code>material_type == 0</code> (Lambertian), the shader checks the <code>has_lambertian</code> uniform flag.
+If the pre-convolved cubemap is available, it samples the lambertian irradiance cubemap along the surface normal:
+<code>e = texture(LAMBERTIAN_CUBEMAP, n).rgb;</code>
+This single texture lookup replaces the analytical sky+sun hemisphere approximation.
+The result is multiplied by the albedo from the material's 2D texture to produce the final diffuse radiance:
+<code>radiance = e * albedo;</code>
+If no lambertian cubemap is loaded, the shader falls back to the original analytical lighting model
+using <code>SKY_ENERGY</code>, <code>SKY_DIRECTION</code>, <code>SUN_ENERGY</code>, and <code>SUN_DIRECTION</code>.
+The key insight is that the heavy hemisphere integral is computed once offline by the cube utility,
+allowing the runtime shader to replace a costly per-fragment integration with a single cubemap lookup
+indexed by the surface normal&mdash;which is valid because the cosine-weighted hemisphere integral
+depends only on the normal direction, not the surface position.
 </p>
 
 <p class="placeholder">
