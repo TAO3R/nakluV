@@ -26,6 +26,9 @@ layout(set = 3, binding = 0) uniform samplerCube CUBEMAP;
 // A2-diffuse
 layout(set = 4, binding = 0) uniform samplerCube LAMBERTIAN_CUBEMAP;
 
+// A2-normal
+layout(set = 5, binding = 0) uniform sampler2D NORMAL_MAP;
+
 layout(push_constant) uniform PushConstants {
     uint material_type;
     float eye_x, eye_y, eye_z;
@@ -34,12 +37,22 @@ layout(push_constant) uniform PushConstants {
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in vec2 texCoord;
+layout(location = 3) in vec3 tangent;
+layout(location = 4) in float bitangent_sign;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec3 n = normalize(normal);
-    vec3 eye = vec3(eye_x, eye_y, eye_z);   // A2-env
+    vec3 N = normalize(normal);
+    vec3 T = normalize(tangent);
+    T = normalize(T - dot(T, N) * N); // re-orthogonalize
+    vec3 B = cross(N, T) * bitangent_sign;
+    mat3 TBN = mat3(T, B, N);
+
+    vec3 map_n = texture(NORMAL_MAP, texCoord).rgb * 2.0 - 1.0;
+    vec3 n = normalize(TBN * map_n);
+
+    vec3 eye = vec3(eye_x, eye_y, eye_z);
 
     vec3 radiance;
 

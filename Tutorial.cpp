@@ -287,9 +287,8 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		//  - All attributes interleaved at stride 48:
 		//      POSITION  offset  0  R32G32B32_SFLOAT    (12 bytes)
 		//      NORMAL    offset 12  R32G32B32_SFLOAT    (12 bytes)
-		//      TANGENT   offset 24  R32G32B32A32_SFLOAT (16 bytes, skipped for now)
+		//      TANGENT   offset 24  R32G32B32A32_SFLOAT (16 bytes)
 		//      TEXCOORD  offset 40  R32G32_SFLOAT       ( 8 bytes)
-		//  - Materials are always lambertian
 
 		if (!loaded_data.empty())
 		{
@@ -301,10 +300,10 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 				scene_mesh.material = mesh.material;
 				scene_mesh.vertices.first = uint32_t(all_vertices.size());
 
-				// attribute
-				auto pos_it = mesh.attributes.find("POSITION");
-				auto nor_it = mesh.attributes.find("NORMAL");
-				auto tex_it = mesh.attributes.find("TEXCOORD");
+			auto pos_it = mesh.attributes.find("POSITION");
+			auto nor_it = mesh.attributes.find("NORMAL");
+			auto tan_it = mesh.attributes.find("TANGENT");
+			auto tex_it = mesh.attributes.find("TEXCOORD");
 
 				if (pos_it == mesh.attributes.end()) {
 					std::cerr << "[Tutorial.cpp]: Mesh '" << mesh_name << "' missing POSITION attribute, skipping.\n";
@@ -326,8 +325,10 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 				// Expected offsets within each 48-byte vertex stride:
 				const uint32_t stride   = pos_attr.stride;  // should be 48
 				const uint32_t pos_off  = pos_attr.offset;  // should be 0
-				const uint32_t nor_off  = (nor_it != mesh.attributes.end()) ? nor_it->second.offset : 12;
-				const uint32_t tex_off  = (tex_it != mesh.attributes.end()) ? tex_it->second.offset : 40;
+			const uint32_t nor_off  = (nor_it != mesh.attributes.end()) ? nor_it->second.offset : 12;
+			const uint32_t tan_off  = (tan_it != mesh.attributes.end()) ? tan_it->second.offset : 24;
+			const uint32_t tex_off  = (tex_it != mesh.attributes.end()) ? tex_it->second.offset : 40;
+			const bool has_tangent  = (tan_it != mesh.attributes.end());
 
 				// Non-indexed: mesh.count is the vertex count directly
 				const uint32_t vertex_count = mesh.count;
@@ -338,30 +339,36 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 					continue;
 				}
 
-				// Extract vertices, skipping TANGENT (we don't need it for now)
-				all_vertices.reserve(all_vertices.size() + vertex_count);
-				for (uint32_t i = 0; i < vertex_count; ++i)
-				{
-					const uint8_t* vertex_base = base_data + i * stride;
+			all_vertices.reserve(all_vertices.size() + vertex_count);
+			for (uint32_t i = 0; i < vertex_count; ++i)
+			{
+				const uint8_t* vertex_base = base_data + i * stride;
 
-					const float* pos = reinterpret_cast<const float*>(vertex_base + pos_off);
-					const float* nor = reinterpret_cast<const float*>(vertex_base + nor_off);
-					const float* tex = reinterpret_cast<const float*>(vertex_base + tex_off);
+				const float* pos = reinterpret_cast<const float*>(vertex_base + pos_off);
+				const float* nor = reinterpret_cast<const float*>(vertex_base + nor_off);
+				const float* tex = reinterpret_cast<const float*>(vertex_base + tex_off);
 
-					// setting model-space aabb
-					scene_mesh.min_x = std::min(scene_mesh.min_x, pos[0]);
-					scene_mesh.max_x = std::max(scene_mesh.max_x, pos[0]);
-					scene_mesh.min_y = std::min(scene_mesh.min_y, pos[1]);
-					scene_mesh.max_y = std::max(scene_mesh.max_y, pos[1]);
-					scene_mesh.min_z = std::min(scene_mesh.min_z, pos[2]);
-					scene_mesh.max_z = std::max(scene_mesh.max_z, pos[2]);
-
-					all_vertices.push_back(PosNorTexVertex{
-						.Position{.x = pos[0], .y = pos[1], .z = pos[2]},
-						.Normal  {.x = nor[0], .y = nor[1], .z = nor[2]},
-						.TexCoord{.s = tex[0], .t = tex[1]},
-					});
+				float tan_x = 1.0f, tan_y = 0.0f, tan_z = 0.0f, tan_w = 1.0f;
+				if (has_tangent) {
+					const float* tan = reinterpret_cast<const float*>(vertex_base + tan_off);
+					tan_x = tan[0]; tan_y = tan[1]; tan_z = tan[2]; tan_w = tan[3];
 				}
+
+				// model-space aabb
+				scene_mesh.min_x = std::min(scene_mesh.min_x, pos[0]);
+				scene_mesh.max_x = std::max(scene_mesh.max_x, pos[0]);
+				scene_mesh.min_y = std::min(scene_mesh.min_y, pos[1]);
+				scene_mesh.max_y = std::max(scene_mesh.max_y, pos[1]);
+				scene_mesh.min_z = std::min(scene_mesh.min_z, pos[2]);
+				scene_mesh.max_z = std::max(scene_mesh.max_z, pos[2]);
+
+				all_vertices.push_back(PosNorTexVertex{
+					.Position{.x = pos[0], .y = pos[1], .z = pos[2]},
+					.Normal  {.x = nor[0], .y = nor[1], .z = nor[2]},
+					.Tangent {.x = tan_x,  .y = tan_y,  .z = tan_z,  .w = tan_w},
+					.TexCoord{.s = tex[0], .t = tex[1]},
+				});
+			}
 
 				scene_mesh.vertices.count = vertex_count;
 				scene_meshes[mesh_name] = scene_mesh;
@@ -395,6 +402,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	{	// build materials
 
 		build_scene_materials();
+		build_normal_map_textures();
 
 	}	// end of build materials
 
@@ -667,6 +675,29 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		assert(texture_views.size() == textures.size());
 	}
 
+	{	// A2-normal: make image views for normal map textures
+		normal_map_views.reserve(normal_map_textures.size());
+		for (Helpers::AllocatedImage const &image : normal_map_textures) {
+			VkImageViewCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.flags = 0,
+				.image = image.handle,
+				.viewType = VK_IMAGE_VIEW_TYPE_2D,
+				.format = image.format,
+				.subresourceRange{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = 1,
+					.baseArrayLayer = 0,
+					.layerCount = 1,
+				},
+			};
+			VkImageView image_view = VK_NULL_HANDLE;
+			VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
+			normal_map_views.emplace_back(image_view);
+		}
+	}
+
 	{ // make a sampler for the textures
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -699,24 +730,24 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	}
 
 	{ // create the texture descriptor pool
-		uint32_t per_texture = uint32_t(textures.size()); //for easier-to-read counting
+		uint32_t per_texture = uint32_t(textures.size());
+		uint32_t per_normal_map = uint32_t(normal_map_textures.size());
 
-		// A2-env & A2-diffuse: make room for cubemap descriptors
 		uint32_t has_cubemap = (environment_cubemap_view == VK_NULL_HANDLE) ? 0 : 1;
 		uint32_t has_lambertian = (lambertian_cubemap_view == VK_NULL_HANDLE) ? 0 : 1;
-		uint32_t extra_sets = has_cubemap + has_lambertian;
+		uint32_t total_sets = per_texture + per_normal_map + has_cubemap + has_lambertian;
 
 		std::array< VkDescriptorPoolSize, 1> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = 1 * 1 * per_texture + extra_sets,
+				.descriptorCount = total_sets,
 			},
 		};
 		
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,
-			.maxSets = 1 * per_texture + extra_sets,
+			.maxSets = total_sets,
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -821,6 +852,42 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
 		}
 	}
+
+	{	// A2-normal: allocate and write normal map descriptor sets
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = texture_descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set5_NormalMap,
+		};
+		normal_map_descriptors.assign(normal_map_textures.size(), VK_NULL_HANDLE);
+		for (VkDescriptorSet &ds : normal_map_descriptors) {
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &ds) );
+		}
+
+		std::vector<VkDescriptorImageInfo> infos(normal_map_textures.size());
+		std::vector<VkWriteDescriptorSet> writes(normal_map_textures.size());
+
+		for (size_t i = 0; i < normal_map_textures.size(); ++i) {
+			infos[i] = VkDescriptorImageInfo{
+				.sampler = texture_sampler,
+				.imageView = normal_map_views[i],
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+			writes[i] = VkWriteDescriptorSet{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = normal_map_descriptors[i],
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &infos[i],
+			};
+		}
+		if (!writes.empty()) {
+			vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
+		}
+	}
 }	// end of Tutorial constructor
 
 // Destructor
@@ -836,8 +903,8 @@ Tutorial::~Tutorial() {
 		vkDestroyDescriptorPool(rtg.device, texture_descriptor_pool, nullptr);
 		texture_descriptor_pool = nullptr;
 
-		//this also frees the descriptor sets allocated from the pool:
 		texture_descriptors.clear();
+		normal_map_descriptors.clear();
 	}
 
 	if (texture_sampler) {
@@ -855,6 +922,18 @@ Tutorial::~Tutorial() {
 		rtg.helpers.destroy_image(std::move(texture));
 	}
 	textures.clear();
+
+	// A2-normal: destroy normal map views and images
+	for (VkImageView &view : normal_map_views) {
+		vkDestroyImageView(rtg.device, view, nullptr);
+		view = VK_NULL_HANDLE;
+	}
+	normal_map_views.clear();
+
+	for (auto &nm : normal_map_textures) {
+		rtg.helpers.destroy_image(std::move(nm));
+	}
+	normal_map_textures.clear();
 
 	// A2-diffuse: lambertian cubemap cleanup
 	if (lambertian_cubemap_sampler != VK_NULL_HANDLE)
@@ -1406,6 +1485,18 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 						objects_pipeline.layout,
 						2,
 						1, &texture_descriptors[inst.texture],
+						0, nullptr
+					);
+				}
+
+				// A2-normal: bind normal map descriptor set
+				if (inst.normal_map_texture < uint32_t(normal_map_descriptors.size())) {
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						objects_pipeline.layout,
+						5,
+						1, &normal_map_descriptors[inst.normal_map_texture],
 						0, nullptr
 					);
 				}

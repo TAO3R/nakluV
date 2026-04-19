@@ -391,14 +391,115 @@ Provide evidence that your Lambertain cube-map pre-filtering works.
 Provide evidence that your <code>"lambertian"</code> material works.
 </p>
 
-<p class="placeholder">
-Plot timings for your Lambertian cube map pre-filtering as applied to various cube sizes.
-</p>
+<figure>
+<canvas id="A2-lambertian-timing" style="display: block; width: 600px; max-width: 600px; margin: 0px auto; background: rgb(255, 255, 255); box-sizing: border-box; height: 300px;"></canvas>
+<figcaption>
+Lambertian convolution time vs. output cubemap face size (input cubemap fixed).
+The cost scales roughly as O(N<sub>out</sub>&sup2;) since each output texel integrates over all input texels.
+</figcaption>
+<script>
+window.addEventListener('load', () => {
+	const faceSize = [4, 8, 16, 32, 64];
+	const timeMs   = [7729.85, 30989, 178495, 743310, 2257380];
+	const timeSec  = timeMs.map(t => t / 1000.0);
+
+	new Chart("A2-lambertian-timing", {
+		type: "line",
+		data: {
+			labels: faceSize,
+			datasets: [
+				{
+					label: "Convolution time (s)",
+					data: timeSec,
+					backgroundColor: '#2266cc',
+					borderColor: '#2266cc',
+					pointRadius: 5,
+					pointBackgroundColor: '#2266cc',
+					fill: false,
+				}
+			]
+		},
+		options: {
+			plugins: {
+				title: { display: true, text: "Lambertian Cube Map Pre-filtering: Time vs. Output Face Size" },
+				legend: { display: true, onClick:()=>{} },
+			},
+			scales: {
+				x: {
+					title: { display: true, text: "Output face size (N\u00d7N\u00d76 texels)" },
+				},
+				y: {
+					min: 0,
+					title: { display: true, text: "Time (seconds)" },
+				},
+			},
+			animation: false,
+		}
+	});
+});
+</script>
+</figure>
 
 <h3>Normal Mapping <span class="atag">A2-normal</span></h3>
 
-<p class="placeholder">
-Where and how does your code implement the normal mapping? (Both the texture loading and the usage in materials.)
+<p>
+Normal mapping is implemented in two stages: texture loading on the CPU side and TBN-based normal perturbation in the fragment shader.
+</p>
+
+<p>
+<b>1. Vertex format and tangent loading</b><br>
+The <code>PosNorTexVertex</code> struct (in <code>PosNorTexVertex.hpp</code>) includes a <code>Tangent</code> field
+(<code>vec4</code>: <code>.xyz</code> = tangent direction, <code>.w</code> = bitangent sign),
+giving a 48-byte stride that matches the <code>.b72</code> on-disk layout exactly.
+During mesh loading (<code>Tutorial.cpp</code>), the <code>"TANGENT"</code> attribute is read from <code>.b72</code>
+data at its declared offset (default 24) and stored per-vertex.
+Meshes without a tangent attribute get a default of <code>(1, 0, 0, +1)</code>.
+</p>
+
+<p>
+<b>2. Normal map texture loading (<code>Materials/Materials.cpp</code>)</b><br>
+<code>Tutorial::build_normal_map_textures()</code> first creates a 1&times;1 default normal map with pixel value
+<code>(128, 128, 255, 255)</code>, which decodes to <code>(0, 0, 1)</code> in tangent space after the <code>*2&minus;1</code>
+bias&mdash;i.e., the unperturbed normal.
+It then iterates over all scene materials: for each material whose <code>normal_map</code> is non-null and
+of type <code>flat</code>, it loads the PNG via <code>stbi_load</code> (4 channels) and creates a GPU image with
+<code>VK_FORMAT_R8G8B8A8_UNORM</code>&mdash;critically <em>not</em> <code>_SRGB</code>, because normal maps
+encode linear direction data, not perceptual color.
+The resulting index into <code>normal_map_textures</code> is stored in <code>mat_to_normal_tex</code>;
+materials without a normal map map to the default (index 0).
+</p>
+
+<p>
+<b>3. Descriptor set and pipeline plumbing</b><br>
+A new descriptor set layout <code>set5_NormalMap</code> (1 combined image sampler, fragment stage) is added to the
+objects pipeline in <code>Tutorial-ObjectsPipeline.cpp</code>, bringing the total to 6 descriptor sets.
+In the constructor (<code>Tutorial.cpp</code>), one <code>VkDescriptorSet</code> is allocated per normal map texture
+from the shared descriptor pool.
+Each <code>ObjectInstance</code> carries a <code>normal_map_texture</code> index (set from <code>mat_to_normal_tex</code>
+during <code>traverse_node</code>), and in the render loop, the appropriate set 5 descriptor is bound per instance
+before each draw call.
+Because every material always has a valid normal map descriptor bound (the 1&times;1 default for materials without one),
+the shader needs no branching flag.
+</p>
+
+<p>
+<b>4. Vertex shader (<code>objects.vert</code>)</b><br>
+The vertex shader accepts <code>Tangent</code> at location 2 and outputs the world-space tangent vector
+(transformed by <code>WORLD_FROM_LOCAL_NORMAL</code>, the same matrix used for the normal) and the
+bitangent sign (<code>Tangent.w</code>) as separate varyings.
+</p>
+
+<p>
+<b>5. Fragment shader (<code>objects.frag</code>)</b><br>
+The TBN matrix is constructed from the interpolated normal and tangent:
+the tangent is re-orthogonalized via Gram&ndash;Schmidt (<code>T = normalize(T &minus; dot(T, N) * N)</code>),
+the bitangent is computed as <code>B = cross(N, T) * bitangent_sign</code>,
+and the TBN matrix is <code>mat3(T, B, N)</code>.
+The normal map is sampled with <code>texture(NORMAL_MAP, texCoord).rgb * 2.0 &minus; 1.0</code>
+to undo the <code>n * 0.5 + 0.5</code> storage bias, then the tangent-space normal is transformed to
+world space via <code>n = normalize(TBN * map_n)</code>.
+This perturbed normal <code>n</code> is then used for all subsequent lighting: lambertian diffuse,
+cubemap lookups, mirror reflection, etc.
 </p>
 
 <p class="placeholder">

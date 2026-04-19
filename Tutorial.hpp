@@ -121,6 +121,9 @@ struct Tutorial : RTG::Application {
 		// A2-diffuse
 		VkDescriptorSetLayout set4_LambertianCubemap = VK_NULL_HANDLE;
 
+		// A2-normal
+		VkDescriptorSetLayout set5_NormalMap = VK_NULL_HANDLE;
+
 		// types for descriptors:
 		struct World {
 			struct {float x, y, z, padding_;} SKY_DIRECTION;
@@ -220,6 +223,7 @@ struct Tutorial : RTG::Application {
 		ObjectVertices vertices;
 		ObjectsPipeline::Transform transform;
 		uint32_t texture = 0;	// an index that indicates which texture descriptor to bind when drawing each instance
+		uint32_t normal_map_texture = 0;	// index into normal_map_descriptors (0 = default flat normal)
 		MaterialType material_type = MaterialType::Lambertian;
 	};
 	std::vector<ObjectInstance> object_instances;
@@ -554,4 +558,22 @@ struct Tutorial : RTG::Application {
 	 * Loads pre-convolved lambertian irradiance cubemaps for environments in a scene
 	 */
 	void load_lambertian_cubemap();
+
+
+	// NORMAL
+
+	/**
+	 * Called within the constructor of Tutorial.
+	 * Creates a 1x1 default flat normal map and loads per-material normal maps,
+	 * populating normal_map_textures and mat_to_normal_tex.
+	 */
+	void build_normal_map_textures();
+
+	/** Normal map textures (parallel to textures, indexed by mat_to_normal_tex) */
+	std::vector<Helpers::AllocatedImage> normal_map_textures;
+	std::vector<VkImageView> normal_map_views;
+	std::vector<VkDescriptorSet> normal_map_descriptors;
+
+	/** Maps material pointer -> index into normal_map_textures; UINT32_MAX if no normal map */
+	std::unordered_map<S72::Material const *, uint32_t> mat_to_normal_tex;
 };

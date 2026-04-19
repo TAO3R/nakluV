@@ -7,10 +7,9 @@
 struct PosNorTexVertex {
     struct {float x,y,z;} Position;
     struct {float x, y, z;} Normal;
+    struct {float x, y, z, w;} Tangent;
     struct {float s, t;} TexCoord;
-    // a pipeline vertex input state that works with a buffer holding a PosColVertex[] array:
     static const VkPipelineVertexInputStateCreateInfo array_input_state;
 };
 
-// to make sure the structure's layout in memory is as we expected (no padding)
-static_assert(sizeof(PosNorTexVertex) == 3*4 + 3*4 + 2*4, "PosNorTexVertex is packed.");
+static_assert(sizeof(PosNorTexVertex) == 3*4 + 3*4 + 4*4 + 2*4, "PosNorTexVertex is packed (48 bytes, matches .b72 stride).");

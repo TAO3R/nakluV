@@ -426,3 +426,64 @@ void Tutorial::load_lambertian_cubemap()
 		break;
 	}
 }
+
+void Tutorial::build_normal_map_textures()
+{
+	// Create default 1x1 normal map (flat normal pointing up in tangent space)
+	{
+		uint32_t default_pixel = 0xFFFF8080; // RGBA = (128, 128, 255, 255) -> tangent-space (0,0,1) after *2-1
+		normal_map_textures.emplace_back(rtg.helpers.create_image(
+			VkExtent2D{ .width = 1, .height = 1 },
+			VK_FORMAT_R8G8B8A8_UNORM,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		));
+		rtg.helpers.transfer_to_image(&default_pixel, sizeof(default_pixel), normal_map_textures.back());
+	}
+	const uint32_t default_normal_idx = 0;
+
+	mat_to_normal_tex.clear();
+	for (auto const &it : scene_S72.materials)
+	{
+		if (it.second.normal_map != nullptr
+			&& it.second.normal_map->type == S72::Texture::Type::flat)
+		{
+			S72::Texture *nm = it.second.normal_map;
+			int w = 0, h = 0;
+			std::unique_ptr<unsigned char, void(*)(void*)> pixels(
+				stbi_load(nm->path.c_str(), &w, &h, nullptr, 4),
+				[](void *p) { stbi_image_free(p); }
+			);
+			if (!pixels || w <= 0 || h <= 0) {
+				std::cerr << "[Materials.cpp]: Failed to load normal map '" << nm->path
+					<< "', using default." << std::endl;
+				mat_to_normal_tex[&it.second] = default_normal_idx;
+				continue;
+			}
+
+			size_t byte_size = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
+			normal_map_textures.emplace_back(rtg.helpers.create_image(
+				VkExtent2D{ .width = static_cast<uint32_t>(w), .height = static_cast<uint32_t>(h) },
+				VK_FORMAT_R8G8B8A8_UNORM,
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			));
+			mat_to_normal_tex[&it.second] = uint32_t(normal_map_textures.size() - 1);
+			rtg.helpers.transfer_to_image(pixels.get(), byte_size, normal_map_textures.back());
+
+			std::cout << "[Materials.cpp]: Loaded normal map '" << nm->path
+				<< "' (" << w << "x" << h << ")" << std::endl;
+		}
+		else
+		{
+			mat_to_normal_tex[&it.second] = default_normal_idx;
+		}
+	}
+
+	std::cout << "[Materials.cpp]: Loaded " << normal_map_textures.size()
+		<< " normal map texture(s) (" << (normal_map_textures.size() - 1) << " custom + 1 default)." << std::endl;
+}

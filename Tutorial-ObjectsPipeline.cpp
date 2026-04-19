@@ -117,13 +117,33 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set4_LambertianCubemap) );
 	}
 
+	{	// set5_NormalMap: per-material tangent-space normal map
+		std::array<VkDescriptorSetLayoutBinding, 1> bindings{
+			VkDescriptorSetLayoutBinding{
+				.binding = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
+		};
+
+		VkDescriptorSetLayoutCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.bindingCount = uint32_t(bindings.size()),
+			.pBindings = bindings.data(),
+		};
+
+		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set5_NormalMap) );
+	}
+
 	{	// create pipeline layout
-		std::array<VkDescriptorSetLayout, 5 > layouts{
+		std::array<VkDescriptorSetLayout, 6> layouts{
 			set0_World,
             set1_Transforms,
             set2_Texture,
 			set3_Cubemap,				// A2-env
 			set4_LambertianCubemap,		// A2-diffuse
+			set5_NormalMap,				// A2-normal
 		};
 
 		// A2-env: `materaial_type` and camera eye position push constants
@@ -270,6 +290,12 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 
 void Tutorial::ObjectsPipeline::destroy(RTG& rtg) {
 	// refsol::BackgroundPipeline_destroy(rtg, &layout, &handle);
+
+	// A2-normal: normal map cleanup
+	if (set5_NormalMap != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, set5_NormalMap, nullptr);
+		set5_NormalMap = VK_NULL_HANDLE;
+	}
 
 	// A2-diffuse: lambertian cubemap cleanup
 	if (set4_LambertianCubemap != VK_NULL_HANDLE) {

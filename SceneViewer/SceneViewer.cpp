@@ -242,6 +242,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 		if (it != scene_meshes.end())	// found a mesh
 		{	
 			uint32_t tex = 0;
+			uint32_t nm_tex = 0;
 			MaterialType mat_type = MaterialType::Lambertian;
 			if (const auto *mat = it->second.material)
 			{
@@ -249,6 +250,12 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 				if (itt != mat_to_tex.end() && itt->second != UINT32_MAX)
 				{
 					tex = itt->second;
+				}
+
+				auto nm_it = mat_to_normal_tex.find(mat);
+				if (nm_it != mat_to_normal_tex.end())
+				{
+					nm_tex = nm_it->second;
 				}
 
 				if (std::holds_alternative<S72::Material::Mirror>(mat->brdf))
@@ -270,6 +277,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 						.WORLD_FROM_LOCAL_NORMAL = mat4_inverse_transpose(WORLD_FROM_LOCAL_NORMAL),
 					},
 					.texture = tex,
+					.normal_map_texture = nm_tex,
 					.material_type = mat_type,
 				};
 			};
