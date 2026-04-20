@@ -80,6 +80,7 @@
 {
 	"type":"MATERIAL",
 	"name":"environment:EnvironmentMaterial",
+	"normalMap":{ "src":"wood_floor_deck_nor_gl_1k.png", "format":"linear" },
 	"environment":{}
 },
 {

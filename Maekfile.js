@@ -80,8 +80,14 @@ main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[.
 // const main_exe = maek.LINK([...main_objs, ...prebuilt_objs], 'bin/main');
 const main_exe = maek.LINK([...main_objs], 'bin/viewer');
 
-// A2-diffuse: standalone cube convolution utility
-const cube_exe = maek.LINK([maek.CPP('Materials/cube.cpp')], 'bin/cube');
+// A2-pbr: compute shaders for the cube utility
+const cube_shaders = [
+	maek.GLSLC('Materials/ggx_convolve.comp'),
+	maek.GLSLC('Materials/brdf_lut.comp'),
+];
+
+// A2-diffuse: standalone cube convolution utility (now with Vulkan compute for GGX/BRDF)
+const cube_exe = maek.LINK([maek.CPP('Materials/cube.cpp', undefined, { depends:[...cube_shaders] })], 'bin/cube');
 
 //default targets:
 maek.TARGETS = [main_exe, cube_exe];

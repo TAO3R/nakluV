@@ -403,6 +403,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 		build_scene_materials();
 		build_normal_map_textures();
+		build_pbr_textures();
 
 	}	// end of build materials
 
@@ -698,6 +699,22 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
+	{	// A2-pbr: make image views for roughness and metalness textures
+		auto make_views = [&](std::vector<Helpers::AllocatedImage> const &imgs, std::vector<VkImageView> &views) {
+			views.reserve(imgs.size());
+			for (auto const &img : imgs) {
+				VkImageViewCreateInfo ci{ .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+					.image = img.handle, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = img.format,
+					.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 }};
+				VkImageView v = VK_NULL_HANDLE;
+				VK(vkCreateImageView(rtg.device, &ci, nullptr, &v));
+				views.emplace_back(v);
+			}
+		};
+		make_views(roughness_textures, roughness_views);
+		make_views(metalness_textures, metalness_views);
+	}
+
 	{ // make a sampler for the textures
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -729,18 +746,31 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		load_lambertian_cubemap();
 	}
 
+	{	// A2-pbr: load GGX prefiltered cubemap and BRDF LUT
+		load_ggx_cubemap();
+		load_brdf_lut();
+	}
+
 	{ // create the texture descriptor pool
 		uint32_t per_texture = uint32_t(textures.size());
 		uint32_t per_normal_map = uint32_t(normal_map_textures.size());
 
 		uint32_t has_cubemap = (environment_cubemap_view == VK_NULL_HANDLE) ? 0 : 1;
 		uint32_t has_lambertian = (lambertian_cubemap_view == VK_NULL_HANDLE) ? 0 : 1;
-		uint32_t total_sets = per_texture + per_normal_map + has_cubemap + has_lambertian;
+
+		// A2-pbr: count PBR materials for set6 descriptors + 1 default
+		uint32_t num_pbr_mat_sets = 1; // default set6
+		for (auto const &it : scene_S72.materials) {
+			if (std::holds_alternative<S72::Material::PBR>(it.second.brdf)) ++num_pbr_mat_sets;
+		}
+		uint32_t total_sets = per_texture + per_normal_map + has_cubemap + has_lambertian + num_pbr_mat_sets + 1;
+		uint32_t total_descriptors = per_texture + per_normal_map + has_cubemap + has_lambertian
+			+ num_pbr_mat_sets * 2 + 2;
 
 		std::array< VkDescriptorPoolSize, 1> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = total_sets,
+				.descriptorCount = total_descriptors,
 			},
 		};
 		
@@ -888,6 +918,80 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
 		}
 	}
+
+	{	// A2-pbr: allocate and write PBR map descriptor sets (set6)
+		// Default set (index 0): roughness_views[0] + metalness_views[0]
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = texture_descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set6_PBRMaps,
+		};
+
+		// Allocate default
+		{
+			VkDescriptorSet ds = VK_NULL_HANDLE;
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &ds));
+			pbr_map_descriptors.push_back(ds);
+
+			VkDescriptorImageInfo rough_info{ .sampler = texture_sampler, .imageView = roughness_views[0], .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+			VkDescriptorImageInfo metal_info{ .sampler = texture_sampler, .imageView = metalness_views[0], .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+			std::array<VkWriteDescriptorSet, 2> writes{
+				VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = 0, .descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &rough_info },
+				VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = 1, .descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &metal_info },
+			};
+			vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
+		}
+
+		// Per-PBR-material descriptors
+		for (auto const &it : scene_S72.materials) {
+			if (!std::holds_alternative<S72::Material::PBR>(it.second.brdf)) {
+				mat_to_pbr_desc[&it.second] = 0;
+				continue;
+			}
+			VkDescriptorSet ds = VK_NULL_HANDLE;
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &ds));
+			uint32_t idx = uint32_t(pbr_map_descriptors.size());
+			pbr_map_descriptors.push_back(ds);
+			mat_to_pbr_desc[&it.second] = idx;
+
+			uint32_t r_idx = 0, m_idx = 0;
+			{ auto f = mat_to_roughness_tex.find(&it.second); if (f != mat_to_roughness_tex.end()) r_idx = f->second; }
+			{ auto f = mat_to_metalness_tex.find(&it.second); if (f != mat_to_metalness_tex.end()) m_idx = f->second; }
+
+			VkDescriptorImageInfo rough_info{ .sampler = texture_sampler, .imageView = roughness_views[r_idx], .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+			VkDescriptorImageInfo metal_info{ .sampler = texture_sampler, .imageView = metalness_views[m_idx], .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+			std::array<VkWriteDescriptorSet, 2> writes{
+				VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = 0, .descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &rough_info },
+				VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = 1, .descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &metal_info },
+			};
+			vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
+		}
+	}
+
+	{	// A2-pbr: allocate and write PBR environment descriptor set (set7) -- always allocated (fallback resources created if real ones absent)
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = texture_descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set7_PBREnv,
+		};
+		VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &pbr_env_descriptors));
+
+		VkDescriptorImageInfo ggx_info{ .sampler = ggx_cubemap_sampler, .imageView = ggx_cubemap_view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+		VkDescriptorImageInfo lut_info{ .sampler = brdf_lut_sampler, .imageView = brdf_lut_view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+		std::array<VkWriteDescriptorSet, 2> writes{
+			VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = pbr_env_descriptors, .dstBinding = 0, .descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ggx_info },
+			VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = pbr_env_descriptors, .dstBinding = 1, .descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &lut_info },
+		};
+		vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
+	}
 }	// end of Tutorial constructor
 
 // Destructor
@@ -905,6 +1009,8 @@ Tutorial::~Tutorial() {
 
 		texture_descriptors.clear();
 		normal_map_descriptors.clear();
+		pbr_map_descriptors.clear();
+		pbr_env_descriptors = VK_NULL_HANDLE;
 	}
 
 	if (texture_sampler) {
@@ -934,6 +1040,27 @@ Tutorial::~Tutorial() {
 		rtg.helpers.destroy_image(std::move(nm));
 	}
 	normal_map_textures.clear();
+
+	// A2-pbr: roughness/metalness texture cleanup
+	for (VkImageView &v : roughness_views) { vkDestroyImageView(rtg.device, v, nullptr); v = VK_NULL_HANDLE; }
+	roughness_views.clear();
+	for (auto &img : roughness_textures) { rtg.helpers.destroy_image(std::move(img)); }
+	roughness_textures.clear();
+
+	for (VkImageView &v : metalness_views) { vkDestroyImageView(rtg.device, v, nullptr); v = VK_NULL_HANDLE; }
+	metalness_views.clear();
+	for (auto &img : metalness_textures) { rtg.helpers.destroy_image(std::move(img)); }
+	metalness_textures.clear();
+
+	// A2-pbr: BRDF LUT cleanup
+	if (brdf_lut_sampler != VK_NULL_HANDLE) { vkDestroySampler(rtg.device, brdf_lut_sampler, nullptr); brdf_lut_sampler = VK_NULL_HANDLE; }
+	if (brdf_lut_view != VK_NULL_HANDLE) { vkDestroyImageView(rtg.device, brdf_lut_view, nullptr); brdf_lut_view = VK_NULL_HANDLE; }
+	if (brdf_lut.handle != VK_NULL_HANDLE) { rtg.helpers.destroy_image(std::move(brdf_lut)); }
+
+	// A2-pbr: GGX cubemap cleanup
+	if (ggx_cubemap_sampler != VK_NULL_HANDLE) { vkDestroySampler(rtg.device, ggx_cubemap_sampler, nullptr); ggx_cubemap_sampler = VK_NULL_HANDLE; }
+	if (ggx_cubemap_view != VK_NULL_HANDLE) { vkDestroyImageView(rtg.device, ggx_cubemap_view, nullptr); ggx_cubemap_view = VK_NULL_HANDLE; }
+	if (ggx_cubemap.handle != VK_NULL_HANDLE) { rtg.helpers.destroy_image(std::move(ggx_cubemap)); }
 
 	// A2-diffuse: lambertian cubemap cleanup
 	if (lambertian_cubemap_sampler != VK_NULL_HANDLE)
@@ -1501,6 +1628,26 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					);
 				}
 
+				// A2-pbr: bind per-material PBR maps (set6) and environment (set7)
+				if (inst.pbr_map_descriptor < uint32_t(pbr_map_descriptors.size())) {
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						objects_pipeline.layout,
+						6,
+						1, &pbr_map_descriptors[inst.pbr_map_descriptor],
+						0, nullptr
+					);
+				}
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					objects_pipeline.layout,
+					7,
+					1, &pbr_env_descriptors,
+					0, nullptr
+				);
+
 				// A2-env: push `material_type` and camera eye position constants
 				ObjectsPipeline::Push push{
 					.material_type = static_cast<uint32_t>(inst.material_type),
@@ -1737,6 +1884,7 @@ void Tutorial::update(float dt) {
 		world.exposure_scale = std::exp2(rtg.configuration.exposure);
 		world.tone_map_mode = (rtg.configuration.tone_map == "reinhard") ? 1u : 0u;
 		world.has_lambertian = (lambertian_cubemap_view != VK_NULL_HANDLE) ? 1u : 0u;
+		world.ggx_max_lod = (ggx_mip_levels > 1) ? float(ggx_mip_levels - 1) : 0.0f;
 	}
 
 	{	// day/night cycle sun and sky:

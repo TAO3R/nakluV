@@ -124,16 +124,20 @@ struct Tutorial : RTG::Application {
 		// A2-normal
 		VkDescriptorSetLayout set5_NormalMap = VK_NULL_HANDLE;
 
+		// A2-pbr
+		VkDescriptorSetLayout set6_PBRMaps = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set7_PBREnv = VK_NULL_HANDLE;
+
 		// types for descriptors:
 		struct World {
 			struct {float x, y, z, padding_;} SKY_DIRECTION;
 			struct {float r, g, b, padding_;} SKY_ENERGY;
 			struct {float x, y, z, padding_;} SUN_DIRECTION;
 			struct {float r, g, b, padding_;} SUN_ENERGY;
-			float exposure_scale;		// A2-tone: precomputed 2^E
-			uint32_t tone_map_mode;		// A2-tone: 0=linear, 1=reinhard
-			uint32_t has_lambertian;	// A2-diffuse: 1 if lambertian cubemap is bound
-			float _pad_tone[1];			// std140 alignment to 16 bytes
+		float exposure_scale;		// A2-tone: precomputed 2^E
+		uint32_t tone_map_mode;		// A2-tone: 0=linear, 1=reinhard
+		uint32_t has_lambertian;	// A2-diffuse: 1 if lambertian cubemap is bound
+		float ggx_max_lod;			// A2-pbr: max mip level for GGX cubemap textureLod
 		};
 		static_assert(sizeof(World) == 4*4 + 4*4 + 4*4 + 4*4 + 4*4, "World is the expected size.");
 
@@ -224,6 +228,7 @@ struct Tutorial : RTG::Application {
 		ObjectsPipeline::Transform transform;
 		uint32_t texture = 0;	// an index that indicates which texture descriptor to bind when drawing each instance
 		uint32_t normal_map_texture = 0;	// index into normal_map_descriptors (0 = default flat normal)
+		uint32_t pbr_map_descriptor = 0;	// index into pbr_map_descriptors (0 = default, PBR materials get their own)
 		MaterialType material_type = MaterialType::Lambertian;
 	};
 	std::vector<ObjectInstance> object_instances;
@@ -576,4 +581,40 @@ struct Tutorial : RTG::Application {
 
 	/** Maps material pointer -> index into normal_map_textures; UINT32_MAX if no normal map */
 	std::unordered_map<S72::Material const *, uint32_t> mat_to_normal_tex;
+
+
+	// PBR
+
+	/** Roughness textures (index 0 = 1x1 default with roughness=1.0) */
+	std::vector<Helpers::AllocatedImage> roughness_textures;
+	std::vector<VkImageView> roughness_views;
+
+	/** Metalness textures (index 0 = 1x1 default with metalness=0.0) */
+	std::vector<Helpers::AllocatedImage> metalness_textures;
+	std::vector<VkImageView> metalness_views;
+
+	std::unordered_map<S72::Material const *, uint32_t> mat_to_roughness_tex;
+	std::unordered_map<S72::Material const *, uint32_t> mat_to_metalness_tex;
+
+	/** Per-material PBR descriptor sets (set6: roughness binding 0, metalness binding 1) */
+	std::vector<VkDescriptorSet> pbr_map_descriptors;
+	std::unordered_map<S72::Material const *, uint32_t> mat_to_pbr_desc;
+
+	/** GGX prefiltered environment cubemap (mipmapped) */
+	Helpers::AllocatedImage ggx_cubemap;
+	VkImageView ggx_cubemap_view = VK_NULL_HANDLE;
+	VkSampler ggx_cubemap_sampler = VK_NULL_HANDLE;
+	uint32_t ggx_mip_levels = 0;
+
+	/** BRDF integration LUT (R16G16_SFLOAT) */
+	Helpers::AllocatedImage brdf_lut;
+	VkImageView brdf_lut_view = VK_NULL_HANDLE;
+	VkSampler brdf_lut_sampler = VK_NULL_HANDLE;
+
+	/** Descriptor set for GGX cubemap + BRDF LUT (set7) */
+	VkDescriptorSet pbr_env_descriptors = VK_NULL_HANDLE;
+
+	void build_pbr_textures();
+	void load_ggx_cubemap();
+	void load_brdf_lut();
 };

@@ -97,7 +97,61 @@ void Tutorial::build_scene_materials()
 	{
 		if (std::holds_alternative<S72::Material::PBR>(it.second.brdf))
 		{
-			
+			std::cout << "[SceneViewer.cpp]: Building a PBR ";
+			auto const &pbr = std::get<S72::Material::PBR>(it.second.brdf);
+
+			if (std::holds_alternative<S72::color>(pbr.albedo))
+			{
+				auto const &col = std::get<S72::color>(pbr.albedo);
+				std::cout << "solid color albedo" << std::endl;
+
+				uint8_t r = static_cast<uint8_t>(std::round(std::clamp(col.r, 0.0f, 1.0f) * 255.0f));
+				uint8_t g = static_cast<uint8_t>(std::round(std::clamp(col.g, 0.0f, 1.0f) * 255.0f));
+				uint8_t b = static_cast<uint8_t>(std::round(std::clamp(col.b, 0.0f, 1.0f) * 255.0f));
+				uint32_t pixel = uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (0xFFu << 24);
+
+				textures.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{ .width = 1, .height = 1 },
+					VK_FORMAT_R8G8B8A8_SRGB,
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+					Helpers::Unmapped
+				));
+				mat_to_tex[&it.second] = uint32_t(textures.size() - 1);
+				rtg.helpers.transfer_to_image(&pixel, sizeof(pixel), textures.back());
+			}
+			else if (std::holds_alternative<S72::Texture *>(pbr.albedo))
+			{
+				std::cout << "texture albedo" << std::endl;
+				S72::Texture *tex = std::get<S72::Texture *>(pbr.albedo);
+				if (!tex || tex->type != S72::Texture::Type::flat) {
+					std::cerr << "[SceneViewer.cpp]: PBR albedo texture null or non-flat.\n";
+					mat_to_tex[&it.second] = 0;
+				} else {
+					int w = 0, h = 0;
+					std::unique_ptr<unsigned char, void(*)(void*)> pixels(
+						stbi_load(tex->path.c_str(), &w, &h, nullptr, 4),
+						[](void *p) { stbi_image_free(p); }
+					);
+					if (!pixels || w <= 0 || h <= 0) {
+						std::cerr << "[SceneViewer.cpp]: Failed to load PBR albedo '" << tex->path << "'.\n";
+						mat_to_tex[&it.second] = 0;
+					} else {
+						VkFormat vk_fmt = (tex->format == S72::Texture::Format::srgb)
+							? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+						size_t byte_size = size_t(w) * size_t(h) * 4u;
+						textures.emplace_back(rtg.helpers.create_image(
+							VkExtent2D{ .width = uint32_t(w), .height = uint32_t(h) },
+							vk_fmt, VK_IMAGE_TILING_OPTIMAL,
+							VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+							VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, Helpers::Unmapped
+						));
+						mat_to_tex[&it.second] = uint32_t(textures.size() - 1);
+						rtg.helpers.transfer_to_image(pixels.get(), byte_size, textures.back());
+					}
+				}
+			}
 		}
 		else if (std::holds_alternative<S72::Material::Lambertian>(it.second.brdf))
 		{
@@ -243,6 +297,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 		{	
 			uint32_t tex = 0;
 			uint32_t nm_tex = 0;
+			uint32_t pbr_desc = 0;
 			MaterialType mat_type = MaterialType::Lambertian;
 			if (const auto *mat = it->second.material)
 			{
@@ -256,6 +311,12 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 				if (nm_it != mat_to_normal_tex.end())
 				{
 					nm_tex = nm_it->second;
+				}
+
+				auto pbr_it = mat_to_pbr_desc.find(mat);
+				if (pbr_it != mat_to_pbr_desc.end())
+				{
+					pbr_desc = pbr_it->second;
 				}
 
 				if (std::holds_alternative<S72::Material::Mirror>(mat->brdf))
@@ -278,6 +339,7 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 					},
 					.texture = tex,
 					.normal_map_texture = nm_tex,
+					.pbr_map_descriptor = pbr_desc,
 					.material_type = mat_type,
 				};
 			};

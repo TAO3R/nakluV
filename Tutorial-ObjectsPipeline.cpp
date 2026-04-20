@@ -136,14 +136,66 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set5_NormalMap) );
 	}
 
+	{	// A2-pbr: set6_PBRMaps (roughness + metalness per material)
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings{
+			VkDescriptorSetLayoutBinding{
+				.binding = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
+			VkDescriptorSetLayoutBinding{
+				.binding = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
+		};
+
+		VkDescriptorSetLayoutCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.bindingCount = uint32_t(bindings.size()),
+			.pBindings = bindings.data(),
+		};
+
+		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set6_PBRMaps) );
+	}
+
+	{	// A2-pbr: set7_PBREnv (GGX prefiltered cubemap + BRDF LUT)
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings{
+			VkDescriptorSetLayoutBinding{
+				.binding = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
+			VkDescriptorSetLayoutBinding{
+				.binding = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
+		};
+
+		VkDescriptorSetLayoutCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.bindingCount = uint32_t(bindings.size()),
+			.pBindings = bindings.data(),
+		};
+
+		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set7_PBREnv) );
+	}
+
 	{	// create pipeline layout
-		std::array<VkDescriptorSetLayout, 6> layouts{
+		std::array<VkDescriptorSetLayout, 8> layouts{
 			set0_World,
             set1_Transforms,
             set2_Texture,
 			set3_Cubemap,				// A2-env
 			set4_LambertianCubemap,		// A2-diffuse
 			set5_NormalMap,				// A2-normal
+			set6_PBRMaps,				// A2-pbr
+			set7_PBREnv,				// A2-pbr
 		};
 
 		// A2-env: `materaial_type` and camera eye position push constants
@@ -290,6 +342,16 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 
 void Tutorial::ObjectsPipeline::destroy(RTG& rtg) {
 	// refsol::BackgroundPipeline_destroy(rtg, &layout, &handle);
+
+	// A2-pbr: PBR descriptor set layouts
+	if (set7_PBREnv != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, set7_PBREnv, nullptr);
+		set7_PBREnv = VK_NULL_HANDLE;
+	}
+	if (set6_PBRMaps != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, set6_PBRMaps, nullptr);
+		set6_PBRMaps = VK_NULL_HANDLE;
+	}
 
 	// A2-normal: normal map cleanup
 	if (set5_NormalMap != VK_NULL_HANDLE) {
