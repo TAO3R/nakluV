@@ -1,0 +1,124 @@
+["s72-v2",
+{
+
+	"type":"LIGHT",
+	"name":"Light",
+	"tint":[1, 1, 1],
+	"sphere":{
+		"radius":0.1,
+		"power":1000
+	}
+},
+{
+	"type":"NODE",
+	"name":"Light",
+	"translation":[2.66289,-3.24588,5.90386],
+	"rotation":[0.288215,0.139985,0.334674,0.886188],
+	"scale":[1,1,1],
+	"light":"Light"
+},
+{
+
+	"type":"CAMERA",
+	"name":"Camera",
+	"perspective":{
+		"aspect":1.77778,
+		"vfov":0.47109,
+		"near":0.1,
+		"far":100
+	}
+},
+{
+	"type":"NODE",
+	"name":"Camera",
+	"translation":[2.31301,-2.249,1.09682],
+	"rotation":[0.56415,0.23884,0.308137,0.727834],
+	"scale":[1,1,1],
+	"camera":"Camera"
+},
+{
+	"type":"MESH",
+	"name":"Circle.004",
+	"topology":"TRIANGLE_LIST",
+	"count":6528,
+	"attributes":{
+		"POSITION":{ "src":"tv_chair.Circle.004.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"tv_chair.Circle.004.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"tv_chair.Circle.004.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"tv_chair.Circle.004.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	}
+},
+{
+	"type":"NODE",
+	"name":"Circle",
+	"translation":[-0.00282669,0.0228823,-0.310017],
+	"rotation":[0,0,0,1],
+	"scale":[0.27434,0.27434,0.27434],
+	"mesh":"Circle.004"
+},
+{
+	"type":"MESH",
+	"name":"Circle.005",
+	"topology":"TRIANGLE_LIST",
+	"count":4248,
+	"attributes":{
+		"POSITION":{ "src":"tv_chair.Circle.005.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"tv_chair.Circle.005.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"tv_chair.Circle.005.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"tv_chair.Circle.005.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	}
+},
+{
+	"type":"NODE",
+	"name":"Circle.002",
+	"translation":[-0.00282669,0.0228823,0.244125],
+	"rotation":[0,0,0,1],
+	"scale":[0.446397,0.446397,0.446397],
+	"mesh":"Circle.005"
+},
+{
+	"type":"MESH",
+	"name":"Mesh.004",
+	"topology":"TRIANGLE_LIST",
+	"count":4230,
+	"attributes":{
+		"POSITION":{ "src":"tv_chair.Mesh.004.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"tv_chair.Mesh.004.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"tv_chair.Mesh.004.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"tv_chair.Mesh.004.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	}
+},
+{
+	"type":"NODE",
+	"name":"pCube1",
+	"translation":[-0.0572874,0.022915,0.636734],
+	"rotation":[0,0,0,1],
+	"scale":[0.4302,0.38915,0.5],
+	"mesh":"Mesh.004"
+},
+{
+	"type":"MESH",
+	"name":"Mesh.005",
+	"topology":"TRIANGLE_LIST",
+	"count":2784,
+	"attributes":{
+		"POSITION":{ "src":"tv_chair.Mesh.005.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"tv_chair.Mesh.005.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"tv_chair.Mesh.005.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"tv_chair.Mesh.005.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	}
+},
+{
+	"type":"NODE",
+	"name":"pCube2",
+	"translation":[-0.0575662,0.022915,0.249949],
+	"rotation":[0,0,0,1],
+	"scale":[0.5621,0.38415,0.5],
+	"mesh":"Mesh.005"
+},
+{
+	"type":"SCENE",
+	"name":"Materials\\tv_chair.blend",
+	"roots":["Light", "Camera", "Circle", "Circle.002", "pCube1", "pCube2"]
+}
+]
