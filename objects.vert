@@ -28,5 +28,5 @@ void main() {
     normal = mat3(TRANSFORMS[gl_InstanceIndex].WORLD_FROM_LOCAL_NORMAL) * Normal;
     tangent = mat3(TRANSFORMS[gl_InstanceIndex].WORLD_FROM_LOCAL_NORMAL) * Tangent.xyz;
     bitangent_sign = Tangent.w;
-    texCoord = TexCoord;
+    texCoord = vec2(TexCoord.x, 1.0 - TexCoord.y);
 }
