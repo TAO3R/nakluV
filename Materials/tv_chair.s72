@@ -37,6 +37,16 @@
 	"camera":"Camera"
 },
 {
+	"type":"MATERIAL",
+	"name":"pbr:woodstand",
+	"normalMap":{ "src":"tablestand_nor.png", "format":"srgb" },
+	"pbr":{
+		"albedo":[ 0.800007, 0.783991, 0.520095 ],
+		"roughness":0.5,
+		"metalness":{ "src":"tablestand_met.png", "format":"srgb" }
+	}
+},
+{
 	"type":"MESH",
 	"name":"Circle.004",
 	"topology":"TRIANGLE_LIST",
@@ -46,7 +56,8 @@
 		"NORMAL":{ "src":"tv_chair.Circle.004.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
 		"TANGENT":{ "src":"tv_chair.Circle.004.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
 		"TEXCOORD":{ "src":"tv_chair.Circle.004.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
-	}
+	},
+	"material":"pbr:woodstand"
 },
 {
 	"type":"NODE",
@@ -55,6 +66,16 @@
 	"rotation":[0,0,0,1],
 	"scale":[0.27434,0.27434,0.27434],
 	"mesh":"Circle.004"
+},
+{
+	"type":"MATERIAL",
+	"name":"pbr:woodtable",
+	"normalMap":{ "src":"table_nor.png", "format":"srgb" },
+	"pbr":{
+		"albedo":{ "src":"table_bas.png", "format":"srgb" },
+		"roughness":0.75,
+		"metalness":{ "src":"table_met.png", "format":"srgb" }
+	}
 },
 {
 	"type":"MESH",
@@ -66,7 +87,8 @@
 		"NORMAL":{ "src":"tv_chair.Circle.005.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
 		"TANGENT":{ "src":"tv_chair.Circle.005.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
 		"TEXCOORD":{ "src":"tv_chair.Circle.005.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
-	}
+	},
+	"material":"pbr:woodtable"
 },
 {
 	"type":"NODE",
@@ -75,6 +97,16 @@
 	"rotation":[0,0,0,1],
 	"scale":[0.446397,0.446397,0.446397],
 	"mesh":"Circle.005"
+},
+{
+	"type":"MATERIAL",
+	"name":"pbr:openPBR_shader1.002",
+	"normalMap":{ "src":"tv_nor.png", "format":"srgb" },
+	"pbr":{
+		"albedo":{ "src":"tv_bas.png", "format":"srgb" },
+		"roughness":0.5,
+		"metalness":{ "src":"tv_met.png", "format":"srgb" }
+	}
 },
 {
 	"type":"MESH",
@@ -86,7 +118,8 @@
 		"NORMAL":{ "src":"tv_chair.Mesh.004.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
 		"TANGENT":{ "src":"tv_chair.Mesh.004.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
 		"TEXCOORD":{ "src":"tv_chair.Mesh.004.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
-	}
+	},
+	"material":"pbr:openPBR_shader1.002"
 },
 {
 	"type":"NODE",
@@ -106,7 +139,8 @@
 		"NORMAL":{ "src":"tv_chair.Mesh.005.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
 		"TANGENT":{ "src":"tv_chair.Mesh.005.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
 		"TEXCOORD":{ "src":"tv_chair.Mesh.005.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
-	}
+	},
+	"material":"pbr:openPBR_shader1.002"
 },
 {
 	"type":"NODE",
