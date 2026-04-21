@@ -118,7 +118,7 @@ code var {
 
 <!-- of course, delete these class="placeholder" notes in your report: -->
 
-<p class="placeholder">
+<p>
 Summarize, in about one paragraph, your approach to the materials assignment.
 How did you structure your code?
 What's cool about it? Are there parts you weren't able to complete?
@@ -126,9 +126,10 @@ What's cool about it? Are there parts you weren't able to complete?
 
 <h2>My Model <span class="atag creative">A2-create</span></h2>
 
-<p class="placeholder">
-Describe the model and texture you created and include a screen recording showing it running in real-time:
-
+<p>
+<!-- Describe the model and texture you created and include a screen recording showing it running in real-time: -->
+I created a retro-style television with a simple table.
+A metal-looking normal map was added to added details on the television.
 
 </p>
 
@@ -143,8 +144,20 @@ Describe the model and texture you created and include a screen recording showin
 -->
 </video>
 
-<p class="placeholder">
-Describe your creation process for the model and texture.
+<p>
+<!-- Describe your creation process for the model and texture. -->
+A plate was created and used boolean to remove some stripes.
+Thickness was added to approximate the shape of a table.
+Lots of subdivision and bevel were added to make it smooth.
+Another plate was added with another subdivision in the middle.
+Extrude tool was used to pull out the middle plate as the table support.
+Subdivision was applied to make it smooth.<br>
+
+A cube was added with loopcuts to add more edges. Editing these new faces to make them into the shape of a TV.
+Bevel some edges to make it more detailed.
+Substance painter was used to add pbr material including albedo, metallic and normal map.<br>
+
+<code>ox_bridge_morning</code> was used as the environment map.
 </p>
 
 <h2>Using the Cube Utility</h2>
@@ -153,22 +166,71 @@ Describe your creation process for the model and texture.
 
 <h3>Command-line Arguments (Cube Utility)</h3>
 
-<p class="placeholder">
-Document the command-line arguments that can be used to control your cube utility.
-Include both the command-line arguments required by the assignment statement and any additional arguments or functions you decided to add.
+<p>
+The <code>cube</code> utility (<code>bin/cube.exe</code>) processes RGBE8-encoded vertical-strip cubemap PNGs.
+All cubemap images use the +X, &minus;X, +Y, &minus;Y, +Z, &minus;Z face order, stored as a <code>W&times;6W</code> vertical strip.
+Multiple operations can be combined in a single invocation (except <code>--merge-faces</code>, which runs standalone).
 </p>
 
 <ul>
-<li class="placeholder"><code>--lambertian <var>out.png</var></code> -- compute lambertian cube map and store as RGBE8 in <code><var>out.png</var></code></li>
-<li class="placeholder">...</li>
+<li><code><var>in.png</var></code> &mdash; (positional) input cubemap path (RGBE8 vertical-strip PNG). Required for <code>--lambertian</code> and <code>--ggx</code>.</li>
+<li><code>--lambertian <var>out.png</var></code> &mdash; pre-convolve the input cubemap into a diffuse irradiance cubemap
+using cosine-weighted hemisphere integration on the CPU, and store the result as an RGBE8 PNG.
+Used at runtime by <code>"lambertian"</code> materials for image-based diffuse lighting.</li>
+<li><code>--size <var>N</var></code> &mdash; set the output face resolution for the lambertian cubemap to <var>N</var>&times;<var>N</var> per face.
+Default: <code>16</code>. Larger values improve quality at the cost of longer precomputation.</li>
+<li><code>--ggx <var>out.png</var></code> &mdash; pre-filter the input cubemap with the cosine-weighted GGX normal distribution function
+using Vulkan compute, producing a mip chain of cubemaps at decreasing roughness levels. The output base name is used
+as a prefix for per-mip-level files. Used at runtime by <code>"pbr"</code> materials for specular IBL.</li>
+<li><code>--ggx-samples <var>N</var></code> &mdash; number of importance-sampled directions per output texel for GGX prefiltering.
+Default: <code>1024</code>.</li>
+<li><code>--brdf-lut <var>out.bin</var></code> &mdash; precompute the environment BRDF lookup table (the second part of the
+split-sum approximation) using Vulkan compute and store it as a raw binary file.
+Does not require an input cubemap.</li>
+<li><code>--brdf-lut-size <var>N</var></code> &mdash; resolution of the BRDF LUT (<var>N</var>&times;<var>N</var>).
+Default: <code>512</code>.</li>
+<li><code>--brdf-lut-samples <var>N</var></code> &mdash; number of importance samples per BRDF LUT texel.
+Default: <code>1024</code>.</li>
+<li><code>--merge-faces <var>px.png</var> <var>nx.png</var> <var>py.png</var> <var>ny.png</var> <var>pz.png</var> <var>nz.png</var> -o <var>out.png</var></code>
+&mdash; combine 6 separate square face images into a single vertical-strip cubemap PNG.
+The 6 files are taken in +X, &minus;X, +Y, &minus;Y, +Z, &minus;Z order.
+All faces must be the same square resolution. Useful for converting cubemaps generated by external tools
+into the format expected by the viewer and the other cube utility operations.</li>
+</ul>
+
+<p>Example usage:</p>
+<ul>
+<li><code>bin/cube env.png --lambertian env.lambertian.png --size 32</code></li>
+<li><code>bin/cube env.png --lambertian env.lambertian.png --ggx env.ggx.png</code></li>
+<li><code>bin/cube --brdf-lut brdf_lut.bin --brdf-lut-size 256</code></li>
+<li><code>bin/cube --merge-faces px.png nx.png py.png ny.png pz.png nz.png -o env.png</code></li>
 </ul>
 
 <h3>Command-line Arguments (Viewer)</h3>
 
-<p class="placeholder">
-Document the command-line arguments that can be used to control your viewer.
-This will probably be a copy of the section from your A1 report with a few new flags relating to tone mapping.
+<p>
+The viewer (<code>bin/viewer.exe</code>) accepts the following command-line flags.
 </p>
+
+<ul>
+<li><code>--exposure <var>E</var></code> &mdash; set the exposure exponent (float). All radiance values are
+multiplied by 2<sup><var>E</var></sup> before tone mapping. Default: <code>0</code> (i.e., multiplier&nbsp;=&nbsp;1.0).
+Positive values brighten the image; negative values darken it.</li>
+<li><code>--tone-map <var>mode</var></code> &mdash; select the tone mapping operator.
+Values: <code>linear</code> (clamp to [0,1], the default), <code>reinhard</code> (Reinhard operator: <code>c/(1+c)</code>).</li>
+</ul>
+
+<h4>Interactive Controls</h4>
+<ul>
+<li><kbd>Tab</kbd> &mdash; cycle camera mode: Scene &rarr; User &rarr; Debug &rarr; Scene.</li>
+<li><kbd>Left</kbd>/<kbd>Right</kbd> &mdash; in Scene mode, switch between scene cameras;
+in Debug mode, cycle bounding volume visualization modes.</li>
+<li><kbd>Space</kbd> &mdash; in Debug mode, toggle debug line drawing (frustum wireframe, bounding volumes).</li>
+<li><kbd>R</kbd> &mdash; in Debug mode, reset animation time to zero.</li>
+<li><kbd>LMB+Drag</kbd> &mdash; orbit (tumble) the camera around its target point (User and Debug modes).</li>
+<li><kbd>Shift+LMB+Drag</kbd> &mdash; pan the camera target in the image plane (User and Debug modes).</li>
+<li><kbd>Scroll Wheel</kbd> &mdash; zoom in/out by changing the orbit radius (User and Debug modes).</li>
+</ul>
 
 <h2>Evidence</h2>
 
