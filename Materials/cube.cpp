@@ -871,6 +871,10 @@ int main(int argc, char **argv) {
 	int brdf_lut_size = 512;
 	int brdf_lut_samples = 1024;
 
+	bool do_merge = false;
+	std::string merge_output;
+	std::vector<std::string> merge_faces;
+
 	for (int i = 1; i < argc; ++i) {
 		std::string arg = argv[i];
 		if (arg == "--lambertian") {
@@ -897,6 +901,16 @@ int main(int argc, char **argv) {
 		} else if (arg == "--brdf-lut-samples") {
 			if (i + 1 < argc) { brdf_lut_samples = std::stoi(argv[++i]); }
 			else { std::cerr << "Error: --brdf-lut-samples requires a number." << std::endl; return 1; }
+		} else if (arg == "--merge-faces") {
+			do_merge = true;
+			if (i + 6 >= argc) {
+				std::cerr << "Error: --merge-faces requires 6 face image paths." << std::endl;
+				return 1;
+			}
+			for (int f = 0; f < 6; ++f) merge_faces.push_back(argv[++i]);
+		} else if (arg == "-o" && do_merge) {
+			if (i + 1 >= argc) { std::cerr << "Error: -o requires an output path." << std::endl; return 1; }
+			merge_output = argv[++i];
 		} else if (input_path.empty()) {
 			input_path = arg;
 		} else {
@@ -905,11 +919,70 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	if (do_merge) {
+		if (merge_output.empty()) {
+			std::cerr << "Error: --merge-faces requires -o output.png" << std::endl;
+			return 1;
+		}
+
+		// Load all 6 faces and verify they're the same square size
+		int face_size = 0;
+		std::vector<std::vector<uint8_t>> face_data(6);
+
+		for (int f = 0; f < 6; ++f) {
+			int w = 0, h = 0;
+			std::unique_ptr<unsigned char, void(*)(void*)> pixels(
+				stbi_load(merge_faces[f].c_str(), &w, &h, nullptr, 4),
+				[](void *p) { stbi_image_free(p); }
+			);
+			if (!pixels) {
+				std::cerr << "Error: failed to load face " << f << " '" << merge_faces[f]
+					<< "': " << stbi_failure_reason() << std::endl;
+				return 1;
+			}
+			if (w != h) {
+				std::cerr << "Error: face '" << merge_faces[f] << "' is not square (" << w << "x" << h << ")." << std::endl;
+				return 1;
+			}
+			if (face_size == 0) face_size = w;
+			else if (w != face_size) {
+				std::cerr << "Error: face '" << merge_faces[f] << "' size " << w
+					<< " doesn't match first face size " << face_size << "." << std::endl;
+				return 1;
+			}
+
+			size_t bytes = size_t(w) * h * 4;
+			face_data[f].assign(pixels.get(), pixels.get() + bytes);
+		}
+
+		// Stack vertically: output is face_size x (face_size * 6)
+		size_t row_bytes = size_t(face_size) * 4;
+		std::vector<uint8_t> output(size_t(face_size) * face_size * 6 * 4);
+		for (int f = 0; f < 6; ++f) {
+			for (int y = 0; y < face_size; ++y) {
+				memcpy(
+					&output[(size_t(f) * face_size + y) * row_bytes],
+					&face_data[f][y * row_bytes],
+					row_bytes
+				);
+			}
+		}
+
+		if (!stbi_write_png(merge_output.c_str(), face_size, face_size * 6, 4, output.data(), int(row_bytes))) {
+			std::cerr << "Error: failed to write '" << merge_output << "'." << std::endl;
+			return 1;
+		}
+		std::cout << "Merged 6 faces (" << face_size << "x" << face_size << ") -> "
+			<< merge_output << " (" << face_size << "x" << face_size * 6 << ")" << std::endl;
+		return 0;
+	}
+
 	if (!do_lambertian && !do_ggx && !do_brdf_lut) {
 		std::cerr << "Usage:\n"
 			<< "  cube in.png --lambertian out.png [--size N]\n"
 			<< "  cube in.png --ggx out.png [--ggx-samples N]\n"
-			<< "  cube --brdf-lut out.bin [--brdf-lut-size N] [--brdf-lut-samples N]\n";
+			<< "  cube --brdf-lut out.bin [--brdf-lut-size N] [--brdf-lut-samples N]\n"
+			<< "  cube --merge-faces px.png nx.png py.png ny.png pz.png nz.png -o out.png\n";
 		return 1;
 	}
 
