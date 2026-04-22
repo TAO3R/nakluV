@@ -31,13 +31,15 @@ void Tutorial::log_lights() {
 	}
 }
 
-void Tutorial::build_gpu_lights() {
+void Tutorial::upload_lights(Workspace &workspace) {
+	// Pack light_instances (filled by traverse_node during update) into gpu_lights for the SSBO
 	gpu_lights.clear();
 	gpu_lights.reserve(light_instances.size());
 
 	constexpr float INF = std::numeric_limits<float>::infinity();
 
 	for (auto &li : light_instances) {
+		assert(li.light != nullptr);
 		GPULight gl;
 		std::memset(&gl, 0, sizeof(gl));
 
@@ -83,9 +85,7 @@ void Tutorial::build_gpu_lights() {
 
 		gpu_lights.push_back(gl);
 	}
-}
 
-void Tutorial::upload_lights(Workspace &workspace) {
 	size_t needed_bytes = sizeof(GPULightHeader) + gpu_lights.size() * sizeof(GPULight);
 
 	if (workspace.Lights_src.handle == VK_NULL_HANDLE || workspace.Lights_src.size < needed_bytes) {

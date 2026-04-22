@@ -669,10 +669,8 @@ struct Tutorial : RTG::Application {
 	};
 	static_assert(sizeof(GPULight) == 96, "GPULight must be 96 bytes (6 x vec4)");
 
+	/** Scratch buffer filled each frame in upload_lights() from light_instances */
 	std::vector<GPULight> gpu_lights;
-
-	/** Convert light_instances into the packed gpu_lights array for SSBO upload */
-	void build_gpu_lights();
 
 	// SSBO header: uint light_count, then GPULight lights[]
 	struct GPULightHeader {
@@ -681,6 +679,9 @@ struct Tutorial : RTG::Application {
 	};
 	static_assert(sizeof(GPULightHeader) == 16, "GPULightHeader must be 16 bytes (1 x vec4)");
 
-	/** Upload gpu_lights into the workspace's Lights SSBO (realloc if needed) */
+	/**
+	 * Per frame: pack light_instances to gpu_lights, write header+array to the mapped staging buffer, copy to GPU.
+	 * Call after update() (traverse_node) has filled light_instances; invoked from render().
+	 */
 	void upload_lights(Workspace &workspace);
 };

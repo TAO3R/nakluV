@@ -1498,8 +1498,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 	}	// end of object transforms buffers resize
 
-	{	// A3-lights: build and upload lights SSBO
-		build_gpu_lights();
+	{	// A3-lights: pack light_instances (from last update/traverse) and upload SSBO
 		upload_lights(workspace);
 	}
 
@@ -1631,6 +1630,18 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					0,	// first set
 					uint32_t(descriptor_sets.size()), descriptor_sets.data(),	// descriptor sets count, ptr
 					0, nullptr	// dynamic offsets count, ptr
+				);
+			}
+
+			{	// A3-lights: bind lights SSBO (set 8), shared for all object instances
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					objects_pipeline.layout,
+					8,
+					1,
+					&workspace.Lights_descriptors,
+					0, nullptr
 				);
 			}
 
