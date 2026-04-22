@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<!-- saved from url=(0070)https://graphics.cs.cmu.edu/courses/15-472-s26/A3/report-template.html -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<title>15-472-s26: A3 - Lights</title>
+<style>
+/* feel free to style your report in a fancier way! */
+
+@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;700&Anonymous+Pro&display=swap');
+
+html {
+	background:#505055;
+}
+
+body {
+	font-family: 'Quicksand', sans-serif;
+	color:#000;
+	background:#eeeee8;
+	font-size:15px;
+	margin: 1em auto 50vh auto;
+	padding: 1em 2em 1em 2em;
+	max-width:45em;
+	border-radius:4px;
+	box-shadow:0 0 10px #0008;
+}
+
+h1 { font-size: 20px; font-weight: 700; }
+h2 { font-size: 16px; font-weight: 700; }
+h3 { font-size: 16px; font-weight: 400; }
+h4 { font-size: 14px; font-weight: 400; }
+
+h1, h2, h3, h4 {
+	margin: 15px 0 0 -10px;
+}
+
+p {
+	margin: 5px 0 0 0;
+}
+
+figure {
+	margin: 10px -2em;
+	padding: 10px 2em;
+	width:100%;
+	background:#e8e8e8;
+}
+
+figcaption {
+	font-size:14px;
+	font-style:italic;
+}
+
+.subtitle {
+	display:block;
+	font-size:16px;
+	font-weight:400;
+}
+
+.placeholder {
+	color:#800;
+	font-style:italic;
+}
+
+kbd {
+	display:inline-block;
+	background:#ccc;
+	color:#444;
+	font-style:normal;
+	font-weight:700;
+	border-radius:8px;
+	padding:1px 6px;
+	margin:1px;
+	border:1.5px solid #aaa;
+}
+
+code {
+	font-family: 'Anonymous Pro', monospace;
+	background: #222;
+	color:#fff;
+	border-radius:4px;
+	padding:2px 4px;
+	margin:1px;
+}
+
+code var {
+	color:#ef5;
+	font-style:italic;
+}
+
+.atag {
+	font-family: 'Calistoga', serif;
+	font-size:90%;
+	color:#000;
+	background:#e17dcd;
+
+	display:inline-block;
+	padding:1px 4px;
+	border-radius: 4px;
+	line-height:120%;
+}
+.atag:before {
+	content:'»';
+}
+.atag.extra {
+	background:#c6aff8;
+}
+.atag.creative {
+	background:linear-gradient(0.35turn, #fcacff, #f9ab93, #76a1e4, #20953d);
+}
+
+</style>
+<!-- Load Chart.js for creating charts (documentation https://www.chartjs.org/docs/latest/ ) -->
+<script src="./report_files/chart.js.download"></script>
+</head>
+<body>
+<h1>A3: Lights
+<span class="subtitle">by <span class="placeholder">Jim McCann (jmccann)</span></span>
+</h1>
+
+<!-- of course, delete these class="placeholder" notes in your report: -->
+
+
+<p class="placeholder">
+Summarize, in about one paragraph, your approach to the lights assignment.
+How did you structure your code?
+What's cool about it? Are there parts you weren't able to complete? 
+</p>
+<p class="placeholder">
+Remember to remove the placeholder class from your text; since (of course) your report information isn't a placeholder and shouldn't be styled as such!
+</p>
+
+<h2>My Lit Scene <span class="atag creative">A3-create</span></h2>
+
+<p class="placeholder">
+Describe the scene you lit, the light count and placement approach, and include a screen recording showing it running in real-time:
+</p>
+
+<video>
+<!--
+  you can use the 'video' element to show your code running
+  Learn more at:
+    https://developer.mozilla.org/en-US/docs/Web/HTML/Element/video
+
+  Example: put the video file in a path near this .html
+  <source src="path/to/video" type="video/mp4" />
+-->
+</video>
+
+<p class="placeholder">
+Credit + cite your sources for textures and models, if you did not create them yourself.
+</p>
+
+<h3>Command-line Arguments (Viewer)</h3>
+
+<p class="placeholder">
+Document the command-line arguments that can be used to control your viewer.
+This will probably be a copy of the section from your A2 report with a few new flags relating to lights (if you added any).
+</p>
+
+<h2>Evidence</h2>
+
+<p class="placeholder">
+The purpose of this section is to get you to think critically about your code by providing evidence sufficient to demonstrate to course staff that it works.
+These thoughts may also help you improve the code as you work on it in the Final project and beyond.
+</p>
+
+<h3>Loading light objects <span class="atag">A3-load</span></h3> 
+
+<p>
+Light data starts in the <code>.s72</code> file as <code>"LIGHT"</code> JSON objects.
+The existing <code>S72::load</code> parser reads each one into an <code>S72::Light</code> struct, which stores a <code>tint</code> (as an rgb color), a <code>shadow</code> resolution hint (uint32, 0 means no shadow), and a <code>source</code> that is a <code>std::variant</code> of <code>Sun</code>, <code>Sphere</code>, or <code>Spot</code>.
+Each variant holds its own parameters &mdash; for example, <code>Sun</code> has <code>angle</code> and <code>strength</code>, <code>Sphere</code> has <code>radius</code>, <code>power</code>, and <code>limit</code>, and <code>Spot</code> adds <code>fov</code> and <code>blend</code> on top of the sphere parameters.
+The light is attached to the scene graph through the <code>light</code> pointer on <code>S72::Node</code>, so its world-space position and orientation come from the node's transform hierarchy.
+</p>
+
+<p>
+On the renderer side, I defined a <code>LightInstance</code> struct inside <code>Tutorial</code> (in the A3-Lights section of <code>Tutorial.hpp</code>) to hold everything I need at draw time:
+a pointer back to the original <code>S72::Light</code> (so I can reach <code>tint</code>, <code>source</code>, etc.), the world-space position extracted from columns of the accumulated transform, the world-space direction (the negated third column of the transform, normalized), and the <code>shadow</code> value copied straight from the light.
+A <code>std::vector&lt;LightInstance&gt;</code> called <code>light_instances</code> is a member of <code>Tutorial</code>.
+</p>
+
+<p>
+Every frame, <code>light_instances</code> is cleared alongside <code>object_instances</code> at the start of the render loop in <code>Tutorial::render()</code>.
+Then, as <code>traverse_node</code> in <code>SceneViewer.cpp</code> walks the scene graph, it checks each node's <code>light</code> pointer.
+If non-null, it extracts the world position from columns 12&ndash;14 of the <code>WORLD_FROM_LOCAL</code> matrix (the translation column), and the world direction from the negated third column (indices 8&ndash;10), normalizing it.
+It pushes a new <code>LightInstance</code> with these values plus the light pointer and shadow flag.
+This means lights that appear multiple times in the scene graph (instanced under different transforms) naturally get separate <code>LightInstance</code> entries with different world-space transforms, which is exactly what I want.
+</p>
+
+<p>
+I decided to keep power/strength and tint separate rather than premultiplying them.
+The <code>S72::Light</code> struct already stores them independently, and I just hold a pointer to it in <code>LightInstance</code>.
+This keeps the loading path simple and gives me the option to use tint and power separately in the shader later if I need to (for example, tint for shadow coloring vs. power for attenuation).
+The actual multiplication happens at shading time in the fragment shader.
+</p>
+
+<p>
+For debugging, I wrote a <code>log_lights()</code> method (defined in <code>Lights/Lights.cpp</code>) that fires once the first time <code>light_instances</code> is non-empty.
+It prints every collected light's name, type (sun/sphere/spot), world position, world direction, shadow value, and tint to the console, which made it easy to verify that lights from example scenes were being picked up with the correct transforms.
+</p>
+
+
+<h3>Adding Direct Lighting to Materials <span class="atag">A3-materials</span></h3>
+
+<p class="placeholder">
+Cover, at least:
+the structures used to pass light lists to materials.
+</p>
+
+<p class="placeholder">
+Include screenshots or recordings of your viewer showing proper behavior of lambertian and pbr materials under sphere, spot, and sun lights.
+</p>
+
+<p class="placeholder">
+Include a graph showing the performance impact of adding additional lights to a test scene.
+Document how you made the scene and what kind of lights and camera positioning you used.
+(Disable shadows for this test.)
+We would theoretically expect a linear increase in computing time; is this borne out in practice?
+How many lights can your viewer handle at a reasonable frame rate?
+</p>
+
+<figure>
+<!-- Feel free to use and duplicate the below example graph to plot data
+ 	 Edit labels and variables in script below the canvas -->
+<canvas id="A3-light-perf" style="display: block; width: 600px; max-width: 600px; margin: 0px auto; background: rgb(255, 255, 255); box-sizing: border-box; height: 300px;" width="750" height="375"></canvas>
+<figcaption>
+The performance of my materials on a given number of lights.
+The result of (my tone-mapping curve) applied to a color of increasing intensity.
+</figcaption>
+</figure>
+<script>
+//adding an event listener so that this chart gets made *after* the document loads:
+window.addEventListener('load', () => {
+	const lights     = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+	const frameTimeL = [16.67, 16.50, 16.81, 16.53, 15.0, 18.0, 20.1, 25.7, 25.0, 20.0, 30.0, 40.0];
+	const frameTimeP = [10, 20, 30, 30, 30, 40, 50, 60, 60, 60, 70, 80];
+	//if your tone mapping handles color channels separately
+
+	// Chart.js supports many types of charts and configuration options.
+	//   See: https://www.chartjs.org/docs/latest/
+	new Chart("A3-light-perf", {
+		type: "line",
+		data: {
+			labels: lights,
+			datasets: [
+				{ label: "lambertian", data: frameTimeL, backgroundColor:'#f00', borderColor:'#f00' },
+				{ label: "pbr", data: frameTimeP, backgroundColor:'#0f0', borderColor:'#0f0' },
+			]
+		},
+		options: {
+			plugins: {
+				title: { display: true, text: "Lighting Performance" }, //show a chart title
+				legend: { display: true, onClick:()=>{} }, //show legend but don't allow interacting
+			},
+			scales: {
+				y:{
+					min:0, //having y-axis start at zero provides better relative view of data
+					title: { display:true, text:"frame time (ms)" },
+				},
+				x:{
+					title: { display:true, text:"number of lights" },
+				},
+			},
+			animation:false, //don't animate in the data sets
+		}
+	});
+});
+</script>
+
+<h3>Adding Shadows for Spot Lights <span class="atag">A3-shadows</span></h3>
+
+<p class="placeholder">
+Cover, at least:
+how (and when) your viewer renders shadow maps;
+how your viewer works to avoid shadow map artifacts (e.g., rendering backfaces; using bias/offset; ...);
+how cube map textures are provided to materials;
+how many PCF samples your code takes and how it weights them.
+</p>
+
+
+<p class="placeholder">
+Include output images showing that spot light shadows are working correctly for both lambertian and pbr materials.
+</p>
+<p class="placeholder">
+Include output images showing that "shadow" light parameter does actually change the shadow map resolution.
+</p>
+
+<p class="placeholder">
+Include a graph showing the performance impact of adding shadowing to lights to a scene.
+Attempt to separate the performance impact of shadow map rendering and shadow map sampling (e.g., by testing the same scenes with per-frame rendered shadow maps and pre-rendered shadow maps). Which is larger?
+</p>
+
+
+
+<h3>Extra: Light Sort <span class="atag extra">A3x-sort</span></h3>
+
+<p class="placeholder">
+Cover, at least:
+your chosen method for sorting lights to meshes.
+</p>
+<p class="placeholder">
+Build a scene in which your light sorting technique provides a performance improvement over rendering all meshes with all lights.
+Include a screen shot (and the scene itself).
+</p>
+<p class="placeholder">
+Include data demonstrating the performance improvement in rendering this scene.
+E.g., a graph of the frame times for an animated fly-through of the scene with and without your sorting code enabled.
+</p>
+
+<h3>Extra: PCSS Soft Shadows <span class="atag extra">A3x-soft</span></h3>
+
+<p class="placeholder">
+Cover, at least:
+your implementation of PCSS (sampling pattern, counts)
+</p>
+
+<p class="placeholder">
+Include images showing the same shadows rendered with and without PCSS, showing the spreading behavior as the shadow stretches further from the light.
+</p>
+
+<h3>Extra: Shadows for Sun Lights <span class="atag extra">A3x-cascade</span></h3>
+
+<p class="placeholder">
+Cover, at least:
+your choice of shadow map cascade levels and layout;
+how your cascade is packed into a texture;
+how [if at all] your cascade avoids "boiling" as the camera moves
+</p>
+
+<p class="placeholder">
+Include images showing a scene rendered with a shadow-casting distant directional light.
+Include images with a modified shader color-coding pixels by what cascade level they are sampling.
+Include images from a debug camera, showing how the shadow map cascade fits the camera frustum.
+</p>
+
+<h3>Extra: Shadows for Sphere Lights <span class="atag extra">A3x-cube</span></h3>
+
+<p class="placeholder">
+Cover, at least:
+how you chose to set up cameras for cube map rendering
+</p>
+
+<p class="placeholder">
+Include images or video showing a scene rendered with a shadow-casting sphere light.
+Show that there are no artifacts at the edges or corners of the shadow map cube.
+</p>
+
+
+<h3>Extra: Other <span class="atag extra">A3x-*</span></h3>
+
+<p class="placeholder">
+If you have received instructor permission to pursue another extra credit activity, include information about that activity here.
+</p>
+
+
+
+<p class="placeholder">
+Include images or video showing a scene rendered with a shadow-casting sphere light.
+Show that there are no artifacts at the edges or corners of the shadow map cube.
+</p>
+
+
+
+<h2>Feedback</h2>
+<p class="placeholder">
+This is the end of the structured report. Feel free to add feedback about A1 to this section.
+</p>
+
+
+
+</body></html>

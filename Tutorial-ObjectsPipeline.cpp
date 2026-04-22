@@ -186,8 +186,27 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set7_PBREnv) );
 	}
 
+	{	// A3-lights: set8_Lights (storage buffer with light array)
+		std::array<VkDescriptorSetLayoutBinding, 1> bindings{
+			VkDescriptorSetLayoutBinding{
+				.binding = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
+		};
+
+		VkDescriptorSetLayoutCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.bindingCount = uint32_t(bindings.size()),
+			.pBindings = bindings.data(),
+		};
+
+		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set8_Lights) );
+	}
+
 	{	// create pipeline layout
-		std::array<VkDescriptorSetLayout, 8> layouts{
+		std::array<VkDescriptorSetLayout, 9> layouts{
 			set0_World,
             set1_Transforms,
             set2_Texture,
@@ -196,6 +215,7 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 			set5_NormalMap,				// A2-normal
 			set6_PBRMaps,				// A2-pbr
 			set7_PBREnv,				// A2-pbr
+			set8_Lights,				// A3-lights
 		};
 
 		// A2-env: `materaial_type` and camera eye position push constants
@@ -342,6 +362,12 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 
 void Tutorial::ObjectsPipeline::destroy(RTG& rtg) {
 	// refsol::BackgroundPipeline_destroy(rtg, &layout, &handle);
+
+	// A3-lights: lights SSBO layout
+	if (set8_Lights != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, set8_Lights, nullptr);
+		set8_Lights = VK_NULL_HANDLE;
+	}
 
 	// A2-pbr: PBR descriptor set layouts
 	if (set7_PBREnv != VK_NULL_HANDLE) {

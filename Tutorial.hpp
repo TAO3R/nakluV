@@ -62,6 +62,11 @@ struct Tutorial : RTG::Application {
 		Helpers::AllocatedBuffer Transforms_src;	// host coherent; mapped
 		Helpers::AllocatedBuffer Transforms;	// device-local
 		VkDescriptorSet Transforms_descriptors;	// references Transforms
+
+		// location for Lights SSBO data: (streamed to GPU per-frame)
+		Helpers::AllocatedBuffer Lights_src;	// host coherent; mapped
+		Helpers::AllocatedBuffer Lights;	// device-local
+		VkDescriptorSet Lights_descriptors;	// references Lights
 	};
 	std::vector< Workspace > workspaces;
 
@@ -127,6 +132,9 @@ struct Tutorial : RTG::Application {
 		// A2-pbr
 		VkDescriptorSetLayout set6_PBRMaps = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set7_PBREnv = VK_NULL_HANDLE;
+
+		// A3-lights
+		VkDescriptorSetLayout set8_Lights = VK_NULL_HANDLE;
 
 		// types for descriptors:
 		struct World {
@@ -634,4 +642,45 @@ struct Tutorial : RTG::Application {
 
 	/** One-time debug log of all collected light instances */
 	void log_lights();
+
+	/** GPU-side light struct, std430-aligned (6 x vec4 = 96 bytes per light).
+	 *  Mirrors the GLSL GPULight struct in the fragment shader SSBO. */
+	struct GPULight {
+		uint32_t type;          // 0 = sun, 1 = sphere, 2 = spot
+		float    _pad0[3];
+
+		float    position[3];   // world-space position (sphere/spot)
+		float    _pad1;
+
+		float    direction[3];  // world-space direction (sun/spot forward; sphere unused)
+		float    _pad2;
+
+		float    tint[3];       // rgb tint
+		float    power;         // sphere/spot: power; sun: strength
+
+		float    radius;        // sphere/spot: source radius; sun: 0
+		float    limit;         // sphere/spot: falloff limit; sun: inf
+		float    fov;           // spot: full cone angle (radians); others: 0
+		float    blend;         // spot: blend fraction; others: 0
+
+		float    angle;         // sun: angular diameter (radians); others: 0
+		float    shadow;        // shadow map resolution (0 = no shadow)
+		float    _pad3[2];
+	};
+	static_assert(sizeof(GPULight) == 96, "GPULight must be 96 bytes (6 x vec4)");
+
+	std::vector<GPULight> gpu_lights;
+
+	/** Convert light_instances into the packed gpu_lights array for SSBO upload */
+	void build_gpu_lights();
+
+	// SSBO header: uint light_count, then GPULight lights[]
+	struct GPULightHeader {
+		uint32_t count;
+		uint32_t _pad[3];
+	};
+	static_assert(sizeof(GPULightHeader) == 16, "GPULightHeader must be 16 bytes (1 x vec4)");
+
+	/** Upload gpu_lights into the workspace's Lights SSBO (realloc if needed) */
+	void upload_lights(Workspace &workspace);
 };

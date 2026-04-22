@@ -127,14 +127,14 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			},
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				.descriptorCount = 1 * per_workspace,	// one descriptor per set, one set per workspace
+				.descriptorCount = 2 * per_workspace,	// Transforms + Lights, one each per workspace
 			},
 		};
 		
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,	// because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors alocated from this pool
-			.maxSets = 3 * per_workspace,	// three sets per workspace
+			.maxSets = 4 * per_workspace,	// Camera, World, Transforms, Lights
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -219,6 +219,17 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Transforms_descriptors));
 
 			// NOTE: will fill in this descriptor set in render when buffers are [re-]allocated
+		}
+
+		{	// allocate descriptor set for Lights SSBO
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set8_Lights,
+			};
+
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Lights_descriptors));
 		}
 		
 		{	// point descriptor to Camera buffer:
@@ -1147,6 +1158,14 @@ Tutorial::~Tutorial() {
 		if (workspace.Transforms.handle != VK_NULL_HANDLE) {
 			rtg.helpers.destroy_buffer(std::move(workspace.Transforms));
 		}
+
+		// Lights_descriptors freed when pool is destroyed
+		if (workspace.Lights_src.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Lights_src));
+		}
+		if (workspace.Lights.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Lights));
+		}
 	}
 	workspaces.clear();
 
@@ -1444,6 +1463,11 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 	}	// end of object transforms buffers resize
 
+	{	// A3-lights: build and upload lights SSBO
+		build_gpu_lights();
+		upload_lights(workspace);
+	}
+
 	{	// memory barrier to make sure copies complete before rendering happens:
 		VkMemoryBarrier memory_barrier{
 			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -1453,7 +1477,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		
 		vkCmdPipelineBarrier(workspace.command_buffer,
 			VK_PIPELINE_STAGE_TRANSFER_BIT,	// srcStageMask
-			VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,	// dstStageMask
+			VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,	// dstStageMask
 			0,	// dependencyFlags
 			1, &memory_barrier,	// memoryBarriers (count, data)
 			0, nullptr,	// bufferMemoryBarriers (count, data)
