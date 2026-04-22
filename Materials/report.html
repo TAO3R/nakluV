@@ -106,6 +106,32 @@ code var {
 .atag.creative {
 	background:linear-gradient(0.35turn, #fcacff, #f9ab93, #76a1e4, #20953d);
 }
+.center-video {
+    display: block;   /* Important: video is inline by default */
+    margin-left: auto;
+    margin-right: auto;
+}
+.center_image {
+    display: block;      /* Required to make margins work */
+    margin-left: auto;   /* Pushes from the left */
+    margin-right: auto;  /* Pushes from the right */
+    
+    /* Good practice for responsiveness */
+    max-width: 100%;     
+    height: auto;        
+}
+.image-row {
+    display: flex;            /* Enables side-by-side layout */
+    justify-content: center;  /* Centers the pair of images on the page */
+    gap: 20px;               /* Adds space between the two images */
+    width: 100%;
+    margin: 20px 0;          /* Adds space above and below the row */
+}
+.image-row img {
+    max-width: 50%;          /* Ensures they fit together (roughly 50% each) */
+    height: auto;            /* Maintains aspect ratio */
+    display: block;
+}
 
 </style>
 <!-- Load Chart.js for creating charts (documentation https://www.chartjs.org/docs/latest/ ) -->
@@ -133,15 +159,19 @@ A metal-looking normal map was added to added details on the television.
 
 </p>
 
-<video>
-<!--
+<!-- <video>
+
   you can use the 'video' element to show your code running
   Learn more at:
     https://developer.mozilla.org/en-US/docs/Web/HTML/Element/video
 
   Example: put the video file in a path near this .html
   <source src="path/to/video" type="video/mp4" />
--->
+
+</video> -->
+
+<video class="center-video" width="640" height="360" controls>
+	<source src="report_files/create_tv_chair.s72.mp4" type="video/mp4" />
 </video>
 
 <p>
@@ -162,7 +192,46 @@ Substance painter was used to add pbr material including albedo, metallic and no
 
 <h2>Using the Cube Utility</h2>
 
-<p class="placeholder">Provide a short overview of how to use your cube utility.</p>
+<p>
+The <code>cube</code> utility (<code>bin/cube.exe</code>) is a standalone command-line tool that preprocesses
+environment cubemaps for use by the real-time viewer.
+It reads and writes cubemaps as RGBE8-encoded PNG images in a vertical-strip layout
+(one square face per row, in +X, &minus;X, +Y, &minus;Y, +Z, &minus;Z order).
+</p>
+
+<p>
+The typical workflow has three steps:
+</p>
+<ol>
+<li><b>Assemble a cubemap</b> (if needed).
+If you have 6 separate face images (e.g., from an external panorama-to-cubemap converter),
+merge them into a single vertical-strip PNG:
+<code>bin/cube --merge-faces px.png nx.png py.png ny.png pz.png nz.png -o env.png</code>
+This was for assembling the cubemap's 6 faces from online converters that receives a panorama image and converts it to a cubemap.
+</li>
+<li><b>Precompute diffuse IBL</b>.
+Convolve the environment cubemap into a small irradiance lookup cubemap for
+<code>"lambertian"</code> materials:
+<code>bin/cube env.png --lambertian env.lambertian.png --size 32</code>.
+The <code>--size</code> flag controls the output face resolution (default 16); even small sizes
+produce smooth results because the cosine-weighted integral is very low-frequency.
+</li>
+<li><b>Precompute specular IBL</b> (for <code>"pbr"</code> materials).
+Pre-filter the environment with the GGX NDF at multiple roughness levels and generate the
+split-sum BRDF LUT:
+<code>bin/cube env.png --ggx env.ggx.png</code> and
+<code>bin/cube --brdf-lut brdf_lut.bin</code>.
+These two operations use Vulkan compute shaders for performance; the BRDF LUT does not require an input cubemap.
+</li>
+</ol>
+
+<p>
+The viewer automatically discovers the precomputed maps by convention: for a scene that references
+<code>env.png</code> as its environment radiance cubemap, it looks for <code>env.lambertian.png</code>
+in the same directory.
+No extra viewer flags are needed&mdash;just place the precomputed files next to the scene and run
+<code>bin/viewer --scene scene.s72</code>.
+</p>
 
 <h3>Command-line Arguments (Cube Utility)</h3>
 
@@ -220,24 +289,12 @@ Positive values brighten the image; negative values darken it.</li>
 Values: <code>linear</code> (clamp to [0,1], the default), <code>reinhard</code> (Reinhard operator: <code>c/(1+c)</code>).</li>
 </ul>
 
-<h4>Interactive Controls</h4>
-<ul>
-<li><kbd>Tab</kbd> &mdash; cycle camera mode: Scene &rarr; User &rarr; Debug &rarr; Scene.</li>
-<li><kbd>Left</kbd>/<kbd>Right</kbd> &mdash; in Scene mode, switch between scene cameras;
-in Debug mode, cycle bounding volume visualization modes.</li>
-<li><kbd>Space</kbd> &mdash; in Debug mode, toggle debug line drawing (frustum wireframe, bounding volumes).</li>
-<li><kbd>R</kbd> &mdash; in Debug mode, reset animation time to zero.</li>
-<li><kbd>LMB+Drag</kbd> &mdash; orbit (tumble) the camera around its target point (User and Debug modes).</li>
-<li><kbd>Shift+LMB+Drag</kbd> &mdash; pan the camera target in the image plane (User and Debug modes).</li>
-<li><kbd>Scroll Wheel</kbd> &mdash; zoom in/out by changing the orbit radius (User and Debug modes).</li>
-</ul>
-
 <h2>Evidence</h2>
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 The purpose of this section is to get you to think critically about your code by providing evidence sufficient to demonstrate to course staff that it works.
 These thoughts may also help you improve the code as you work on it in A3 and beyond.
-</p>
+</p> -->
 
 
 <h3>Environment Loading and Display <span class="atag">A2-env</span></h3>
@@ -312,11 +369,11 @@ Lambertian/PBR: keep existing lighting path (2D texture albedo + sky/sun lightin
 </p>
 
 <p>
-Provide evidence that your code can load environment maps and display <code>"environment"</code> and <code>"mirror"</code> materials.
-<!-- Loading Materials.s72:
-<video>
-	
-</video> -->
+<!-- Provide evidence that your code can load environment maps and display <code>"environment"</code> and <code>"mirror"</code> materials. -->
+Loading environment map and display <code>environment</code> and <code>mirror</code> materials:<br><br>
+<video class="center-video" width="640" height="360" controls>
+	<source src="report_files/env_Materials.s72.mp4" type="video/mp4" />
+</video>
 </p>
 
 <h3>Tone Mapping <span class="atag">A2-tone</span></h3>
@@ -336,61 +393,113 @@ It is a simple per-channel operation that gracefully prevents bright areas from 
 The operator is selectable via the <code>--tone-map reinhard</code> command-line option.
 </p>
 
-<p class="placeholder">
-Provide evidence that your tone mapping and exposure controls work.
+<p>
+<!-- Provide evidence that your tone mapping and exposure controls work. -->
 
+<br>Linear tone mapping with exposure = 0 and 2:
+<div class="image-row">
+    <img src="report_files/tone_7680_4320_0_linear.png" alt="linear tone mapping with exposure = 0">
+    <img src="report_files/tone_7680_4320_2_linear.png" alt="linear tone mapping with exposure = 2">
+</div>
+
+Reinhard tone mapping with exposure = 0 and 2:
+<div class="image-row">
+    <img src="report_files/tone_7680_4320_0_reinhard.png" alt="reinhard tone mapping with exposure = 0">
+    <img src="report_files/tone_7680_4320_2_reinhard.png" alt="reinhard tone mapping with exposure = 2">
+</div>
 
 </p>
 
-<p class="placeholder">
-Plot your tone-mapping curve:
+<p>
+The charts below plot the output of each tone mapping mode for a test color
+<code>(1.0&middot;I, 0.5&middot;I, 0.1&middot;I)</code> as input intensity <code>I</code> increases
+(with exposure&nbsp;=&nbsp;0, i.e., multiplier&nbsp;=&nbsp;1.0).
+Because the three channels have different magnitudes, a per-channel nonlinear operator
+compresses them by different amounts&mdash;the higher-energy red channel saturates faster
+than blue, gradually shifting hue toward white at high intensities.
 </p>
 
 <figure>
-<!-- Feel free to use and duplicate the below example graph to plot data
- 	 Edit labels and variables in script below the canvas -->
-<canvas id="A2-tone-curve" style="display: block; width: 600px; max-width: 600px; margin: 0px auto; background: rgb(255, 255, 255); box-sizing: border-box; height: 300px;" width="1125" height="562"></canvas>
+<canvas id="A2-tone-linear" style="display: block; width: 600px; max-width: 600px; margin: 0px auto; background: #fff; box-sizing: border-box; height: 300px;"></canvas>
 <figcaption>
-The result of (my tone-mapping curve) applied to a color of increasing intensity.
+Linear tone mapping (clamp): each channel grows linearly until it clips at 1.0.
+Red clips first (at I&nbsp;=&nbsp;1.0), green at I&nbsp;=&nbsp;2.0, blue at I&nbsp;=&nbsp;10.0.
 </figcaption>
 <script>
-//adding an event listener so that this chart gets made *after* the document loads:
 window.addEventListener('load', () => {
-	//in a real workload these arrays would be a lot longer:
-	// you might even want to write a for() loop in javascript to make them
-	const intensity  = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6];
-	const outR       = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.0, 1.0, 1.0];
-	const outG       = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
-	const outB       = [0.0,0.02,0.04,0.06,0.08, 0.1,0.12,0.14,0.16];
-	//if your tone mapping handles color channels separately
-
-	// Chart.js supports many types of charts and configuration options.
-	//   See: https://www.chartjs.org/docs/latest/
-	new Chart("A2-tone-curve", {
+	const N = 50, maxI = 10.5;
+	const intensity = [], outR = [], outG = [], outB = [];
+	for (let i = 0; i <= N; i++) {
+		const I = (i / N) * maxI;
+		intensity.push(I.toFixed(2));
+		outR.push(Math.min(1.0 * I, 1.0));
+		outG.push(Math.min(0.5 * I, 1.0));
+		outB.push(Math.min(0.1 * I, 1.0));
+	}
+	new Chart("A2-tone-linear", {
 		type: "line",
 		data: {
 			labels: intensity,
 			datasets: [
-				{ label: "red", data: outR, backgroundColor:'#f00', borderColor:'#f00' },
-				{ label: "green", data: outG, backgroundColor:'#0f0', borderColor:'#0f0' },
-				{ label: "blue", data: outB, backgroundColor:'#00f', borderColor:'#00f' },
+				{ label: "red (1.0\u00d7I)", data: outR, backgroundColor:'#f00', borderColor:'#f00', pointRadius:0 },
+				{ label: "green (0.5\u00d7I)", data: outG, backgroundColor:'#0a0', borderColor:'#0a0', pointRadius:0 },
+				{ label: "blue (0.1\u00d7I)", data: outB, backgroundColor:'#00f', borderColor:'#00f', pointRadius:0 },
 			]
 		},
 		options: {
 			plugins: {
-				title: { display: true, text: "Tone Mapping intenisty * (1.0, 0.5, 0.1)" }, //show a chart title
-				legend: { display: true, onClick:()=>{} }, //show legend but don't allow interacting
+				title: { display: true, text: "Linear (clamp) \u2014 color (1.0, 0.5, 0.1) \u00d7 intensity" },
+				legend: { display: true, onClick:()=>{} },
 			},
 			scales: {
-				y:{
-					min:0, //having y-axis start at zero provides better relative view of data
-					title: { display:true, text:"output intensity" },
-				},
-				x:{
-					title: { display:true, text:"intensity" },
-				},
+				y:{ min:0, max:1.1, title: { display:true, text:"output intensity" } },
+				x:{ title: { display:true, text:"input intensity I" } },
 			},
-			animation:false, //don't animate in the data sets
+			animation: false,
+		}
+	});
+});
+</script>
+</figure>
+
+<figure>
+<canvas id="A2-tone-reinhard" style="display: block; width: 600px; max-width: 600px; margin: 0px auto; background: #fff; box-sizing: border-box; height: 300px;"></canvas>
+<figcaption>
+Reinhard tone mapping (<code>c / (1 + c)</code>): each channel curves smoothly toward 1.0 but never reaches it.
+Higher-magnitude channels compress more aggressively, causing a gradual hue shift toward white at high intensities.
+</figcaption>
+<script>
+window.addEventListener('load', () => {
+	const reinhard = (c) => c / (1.0 + c);
+	const N = 50, maxI = 10.5;
+	const intensity = [], outR = [], outG = [], outB = [];
+	for (let i = 0; i <= N; i++) {
+		const I = (i / N) * maxI;
+		intensity.push(I.toFixed(2));
+		outR.push(reinhard(1.0 * I));
+		outG.push(reinhard(0.5 * I));
+		outB.push(reinhard(0.1 * I));
+	}
+	new Chart("A2-tone-reinhard", {
+		type: "line",
+		data: {
+			labels: intensity,
+			datasets: [
+				{ label: "red (1.0\u00d7I)", data: outR, backgroundColor:'#f00', borderColor:'#f00', pointRadius:0 },
+				{ label: "green (0.5\u00d7I)", data: outG, backgroundColor:'#0a0', borderColor:'#0a0', pointRadius:0 },
+				{ label: "blue (0.1\u00d7I)", data: outB, backgroundColor:'#00f', borderColor:'#00f', pointRadius:0 },
+			]
+		},
+		options: {
+			plugins: {
+				title: { display: true, text: "Reinhard (c / (1+c)) \u2014 color (1.0, 0.5, 0.1) \u00d7 intensity" },
+				legend: { display: true, onClick:()=>{} },
+			},
+			scales: {
+				y:{ min:0, max:1.1, title: { display:true, text:"output intensity" } },
+				x:{ title: { display:true, text:"input intensity I" } },
+			},
+			animation: false,
 		}
 	});
 });
@@ -450,9 +559,28 @@ indexed by the surface normal&mdash;which is valid because the cosine-weighted h
 depends only on the normal direction, not the surface position.
 </p>
 
-<p class="placeholder">
-Provide evidence that your Lambertain cube-map pre-filtering works.
-Provide evidence that your <code>"lambertian"</code> material works.
+<p>
+Lambertain cubemap pre-filtering:
+<video class="center-video" width="640" height="360" controls>
+	<source src="report_files/diffuse_cube_utility.mp4" type="video/mp4" />
+</video>
+</p>
+
+<p>
+<br>
+Cubemap viewer:
+<div class="image-row">
+    <img src="report_files/diffuse_environment.png" alt="environment cubemap used to generate lambertian cubemap">
+    <img src="report_files/diffuse_lambertian_cubemap.png" alt="lambertian cubemap generated">
+</div>
+</p>
+
+<p>
+Without and with lambertian cubemap:
+<div class="image-row">
+    <img src="report_files/diffuse_without_lambertian_cubemap.png" alt="scene rendered without lambertian cubemap">
+    <img src="report_files/diffuse_with_lambertian_cubemap.png" alt="scene rendered with lambertian cubemap">
+</div>
 </p>
 
 <figure>
@@ -566,8 +694,13 @@ This perturbed normal <code>n</code> is then used for all subsequent lighting: l
 cubemap lookups, mirror reflection, etc.
 </p>
 
-<p class="placeholder">
-Provide evidence that your normal mapping works properly.
+<p>
+<br>
+Normal mapping:
+<video class="center-video" width="640" height="360" controls>
+	<source src="report_files/nor_Materials.s72.mp4" type="video/mp4" />
+</video>
+
 </p>
 
 <p class="placeholder">
@@ -577,31 +710,147 @@ Can you make normal mapping a bottleneck? (I'm not actually sure if you can! Ask
 
 <h3>Physically-Based Material <span class="atag">A2-pbr</span></h3>
 
-<p class="placeholder">
-Where and how does your code implement the <code>"pbr"</code> material?
-How did you implement the integration required to pre-filter cube maps?
-Where does your code precompute and load the "environment BRDF" (the second part of the split sum), and how is it stored?
+<p>
+The <code>"pbr"</code> material is implemented using the split-sum approximation of the rendering equation,
+spanning offline precomputation in the <code>cube</code> utility (Vulkan compute), runtime resource loading,
+and a fragment shader that combines specular and diffuse IBL.
 </p>
 
-<p class="placeholder">
-Provide evidence that your <code>"pbr"</code> material works properly.
+<p>
+<b>1. GGX pre-filtered cubemap (<code>cube --ggx</code>)</b><br>
+The <code>compute_ggx</code> function in <code>Materials/cube.cpp</code> generates a mip chain of pre-filtered
+environment cubemaps at 5 roughness levels (0.2, 0.4, 0.6, 0.8, 1.0),
+each stored as a halved-resolution RGBE8 vertical-strip PNG
+(e.g., <code>env.ggx.1.png</code> through <code>env.ggx.5.png</code>).
+The input RGBE8 cubemap is decoded to RGBA32F on the CPU, uploaded to a <code>VkImage</code>
+with <code>VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT</code> and 6 array layers,
+and sampled via a cube <code>VkImageView</code> + linear <code>VkSampler</code>.
 </p>
 
-<p class="placeholder">
-Provide evidence that your cube utility is able to correctly pre-filter cube maps with the cosine-weighted GGX normal distribution function.
-You may wish to, e.g., show that no energy is lost.
+<p>
+A Vulkan compute shader (<code>Materials/ggx_convolve.comp</code>) performs the integration.
+For each output texel with normal direction <b>N</b>, it importance-samples the GGX NDF
+using the Hammersley low-discrepancy sequence (default 1024 samples).
+For each sample, it generates a half-vector <b>H</b> via
+<code>importance_sample_ggx(xi, N, &alpha;&sup2;)</code>,
+reflects to get the light direction <b>L</b> = <code>2&middot;dot(V,H)&middot;H&nbsp;&minus;&nbsp;V</code>,
+and accumulates <code>L(L)&middot;max(dot(N,L),0)</code>, weighting by <code>NdotL</code>.
+The final value is normalized by the accumulated weight: <code>color /= max(weight, 0.001)</code>.
+The shader dispatches 6 times per mip level (once per face),
+with push constants carrying <code>roughness</code>, <code>face</code>, <code>output_size</code>, and <code>num_samples</code>.
+After each face, the output image is copied to a staging buffer,
+then the 6 faces are RGBE-encoded and written as a vertical-strip PNG.
 </p>
 
-<p class="placeholder">
-Provide evidence that your cube utility is able to correctly pre-integrate the environment BRDF part of the split sum.
-(E.g., an image of the precomputed table to compare to the one presented by Karis.)
+<p>
+<b>2. Environment BRDF LUT (<code>cube --brdf-lut</code>)</b><br>
+The <code>compute_brdf_lut</code> function generates a 2D lookup table (the second part of the split-sum)
+using a Vulkan compute shader (<code>Materials/brdf_lut.comp</code>).
+The LUT is parameterized by <code>NdotV</code> (x-axis) and <code>roughness</code> (y-axis).
+For each texel, the shader importance-samples the GGX NDF and accumulates the <em>scale</em> and <em>bias</em>
+terms of the Fresnel split:
+<code>scale += G_Vis&middot;(1 &minus; F<sub>c</sub>)</code> and <code>bias += G_Vis&middot;F<sub>c</sub></code>,
+where <code>F<sub>c</sub> = (1 &minus; VdotH)<sup>5</sup></code> (Schlick) and
+<code>G_Vis = G(NdotV, NdotL, &alpha;) &middot; VdotH / (NdotH &middot; NdotV)</code>
+using the Smith&ndash;Schlick&ndash;GGX geometry function with <code>k = (&alpha;&sup2;)/2</code>.
+The output is a single <code>VK_FORMAT_R16G16_SFLOAT</code> image (16-bit float, 2 channels),
+stored on disk as a raw binary file with an 8-byte header (width, height as <code>uint32_t</code>)
+followed by the pixel data.
+Default resolution is 512&times;512 with 1024 samples per texel.
 </p>
 
+<p>
+<b>3. Runtime loading</b><br>
+<code>Tutorial::load_ggx_cubemap()</code> (in <code>Materials/Materials.cpp</code>) discovers
+GGX mip files by scanning for <code>env.ggx.1.png</code>, <code>env.ggx.2.png</code>, etc.
+It loads each mip&rsquo;s RGBE8 PNG, decodes to RGBA32F, and uploads all mip levels into a single
+<code>VkImage</code> with 6 array layers and <code>mipLevels = num_mips + 1</code>
+(mip 0 is the original full-resolution environment).
+The <code>VkSampler</code> is configured with <code>maxLod = float(num_mips)</code>
+so that <code>textureLod</code> can interpolate between mip levels by roughness.
+If no GGX mip files are found, a 1&times;1 fallback cubemap is created.
+</p>
+
+<p>
+<code>Tutorial::load_brdf_lut()</code> reads the binary LUT from <code>brdf_lut.bin</code>,
+creates a 2D <code>VK_FORMAT_R16G16_SFLOAT</code> image, and uploads the data.
+If the file is missing, a 1&times;1 fallback (0.0, 0.0) is used.
+Both the GGX cubemap and BRDF LUT are bound together in descriptor set 7
+(<code>set7_PBREnv</code>: binding 0 = <code>samplerCube GGX_CUBEMAP</code>,
+binding 1 = <code>sampler2D BRDF_LUT</code>).
+Per-material roughness and metalness textures are bound at set 6
+(<code>set6_PBRMaps</code>: binding 0 = <code>ROUGHNESS_MAP</code>,
+binding 1 = <code>METALNESS_MAP</code>).
+</p>
+
+<p>
+<b>4. Fragment shader (<code>objects.frag</code>)</b><br>
+When <code>material_type == 3</code> (PBR), the shader implements the split-sum approximation:
+</p>
+<ul>
+<li><b>Specular:</b> The reflection vector <b>R</b> = <code>reflect(&minus;V, n)</code> is used to
+sample the GGX pre-filtered cubemap at a LOD determined by roughness:
+<code>textureLod(GGX_CUBEMAP, R, roughness * ggx_max_lod)</code>.
+The BRDF LUT is sampled at <code>(NdotV, roughness)</code> to get the scale and bias terms.
+The specular contribution is <code>prefilteredColor * (F0 * envBRDF.x + envBRDF.y)</code>,
+where <code>F0 = mix(0.04, albedo, metalness)</code>.</li>
+<li><b>Diffuse:</b> A Fresnel-weighted diffuse factor
+<code>kD = (1 &minus; F) * (1 &minus; metalness)</code> is computed using the full Schlick Fresnel.
+The irradiance comes from the lambertian pre-convolved cubemap (if available) or the analytical
+sky+sun fallback. The diffuse contribution is <code>kD * albedo * irradiance</code>.</li>
+<li>The final radiance is <code>diffuse + specular</code>, then passed through tone mapping.</li>
+</ul>
+
+<p>
+<br>
+<code>"pbr"</code> material working:
+
+<img src="report_files/pbr_materials.s72.png" alt="pbr materials in materials.s72" class="center_image">
+</p>
+
+<p>
+<br>
+Pre-filter cube maps with the cosine-weighted GGX normal distribution function:
+<video class="center-video" width="640" height="360" controls>
+	<source src="report_files/pbr_mip-level_generation.mp4" type="video/mp4" />
+</video>
+
+<br>Original environment map:
+<img src="report_files/diffuse_environment.png" alt="original environment map" class="center_image">
+
+<br>Mip level 1 (roughness = 0.2):
+<img src="report_files/pbr_ggx_0.2.png" alt="pbr pre-filter cubemap mip level 1" class="center_image">
+
+<br>Mip level 2 (roughness = 0.4):
+<img src="report_files/pbr_ggx_0.4.png" alt="pbr pre-filter cubemap mip level 2" class="center_image">
+
+<br>Mip level 3 (roughness = 0.6):
+<img src="report_files/pbr_ggx_0.6.png" alt="pbr pre-filter cubemap mip level 3" class="center_image">
+
+<br>Mip level 4 (roughness = 0.8):
+<img src="report_files/pbr_ggx_0.8.png" alt="pbr pre-filter cubemap mip level 4" class="center_image">
+
+<br>Mip level 5 (roughness = 1.0):
+<img src="report_files/pbr_ggx_1.0.png" alt="pbr pre-filter cubemap mip level 5" class="center_image">
+
+</p>
+
+
+<br>
+<p>
+BRDF pre-integration (Karis's vs. Mine):
+<div class="image-row">
+    <img src="report_files/pbr_brdf-lut_Karis.png" alt="Karis">
+    <img src="report_files/pbr_brdf-lut.png" alt="scene rendered with lambertian cubemap">
+</div>
+</p>
+
+<!-- 
 <p class="placeholder">
 Provide charts of timings characterizing the performance of your cube utility.
-</p>
+</p> -->
 
-<h3>Displacement Mapping <span class="atag">A2x-displacement</span></h3>
+<!-- <h3>Displacement Mapping <span class="atag">A2x-displacement</span></h3>
 
 <p class="placeholder">
 How did you implement displacement mapping?
@@ -609,13 +858,14 @@ How did you implement displacement mapping?
 
 <p class="placeholder">
 What is the performance impact of using displacement mapping in a scene?
-Include charts or tables and an example scene where displacement mapping is a bottleneck.
-</p>
+Include charts or tables and an example scene where displacement mapping is a bottleneck. -->
 
+</p>
+<!-- 
 <h2>Feedback</h2>
 <p class="placeholder">
 This is the end of the structured report. Feel free to add feedback about A1 to this section.
-</p>
+</p> -->
 
 
 
