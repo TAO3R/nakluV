@@ -231,8 +231,28 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Lights_descriptors));
 		}
+
+		{	// A3-lights: initial SSBO storage (size matches first upload_lights rounding); count=0 until render uploads
+			constexpr VkDeviceSize lights_buf_bytes = 4096;
+			workspace.Lights_src = rtg.helpers.create_buffer(
+				lights_buf_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				Helpers::Mapped
+			);
+			workspace.Lights = rtg.helpers.create_buffer(
+				lights_buf_bytes,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			);
+			{
+				GPULightHeader header{};
+				std::memcpy(workspace.Lights_src.allocation.data(), &header, sizeof(header));
+			}
+		}
 		
-		{	// point descriptor to Camera buffer:
+		{	// point descriptor to Camera, World, and Lights buffers:
 			VkDescriptorBufferInfo Camera_info {
 				.buffer = workspace.Camera.handle,
 				.offset = 0,
@@ -245,7 +265,13 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 				.range = workspace.World.size,
 			};
 
-			std::array<VkWriteDescriptorSet, 2> writes {
+			VkDescriptorBufferInfo Lights_info{
+				.buffer = workspace.Lights.handle,
+				.offset = 0,
+				.range = workspace.Lights.size,
+			};
+
+			std::array<VkWriteDescriptorSet, 3> writes {
 				VkWriteDescriptorSet {
 					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 					.dstSet = workspace.Camera_descriptors,
@@ -263,6 +289,15 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 					.descriptorCount = 1,
 					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 					.pBufferInfo = &World_info,
+				},
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Lights_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &Lights_info,
 				},
 			};
 
