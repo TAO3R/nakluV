@@ -367,6 +367,22 @@ void Tutorial::traverse_node(S72::Node *node, mat4 parent_transform)
 		}	// end of mesh found in scene_meshes
 	}
 
+	// A3-load: collect light instances
+	if (node->light != nullptr) {
+		float dx = -WORLD_FROM_LOCAL[8];
+		float dy = -WORLD_FROM_LOCAL[9];
+		float dz = -WORLD_FROM_LOCAL[10];
+		float len = std::sqrt(dx*dx + dy*dy + dz*dz);
+		if (len > 0.f) { dx /= len; dy /= len; dz /= len; }
+
+		light_instances.push_back(LightInstance{
+			.light = node->light,
+			.world_position = { WORLD_FROM_LOCAL[12], WORLD_FROM_LOCAL[13], WORLD_FROM_LOCAL[14] },
+			.world_direction = { dx, dy, dz },
+			.shadow = node->light->shadow,
+		});
+	}
+
 	//	Recurse into children, passing WORLD_FROM_LOCAL as their parent_transform
 	for (auto& child_node : node->children)
 	{

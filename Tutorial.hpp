@@ -617,4 +617,21 @@ struct Tutorial : RTG::Application {
 	void build_pbr_textures();
 	void load_ggx_cubemap();
 	void load_brdf_lut();
+
+	//--------------------------------------------------------------------
+	// A3-Lights:
+
+	// LOAD
+
+	/** Runtime light instance, populated during traverse_node each frame */
+	struct LightInstance {
+		S72::Light *light = nullptr;
+		struct { float x, y, z; } world_position = {0.f, 0.f, 0.f};
+		struct { float x, y, z; } world_direction = {0.f, 0.f, -1.f};
+		uint32_t shadow = 0;
+	};
+	std::vector<LightInstance> light_instances;
+
+	/** One-time debug log of all collected light instances */
+	void log_lights();
 };

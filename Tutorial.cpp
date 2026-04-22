@@ -2188,6 +2188,7 @@ void Tutorial::update(float dt) {
 	{	// make some objects:
 		object_instances.clear();
 		object_bounds.clear();
+		light_instances.clear();
 
 		// scene loaded: create instances from scene meshes
 		if (scene_vertices.handle != VK_NULL_HANDLE)
@@ -2197,6 +2198,8 @@ void Tutorial::update(float dt) {
 			{
 				traverse_node(root, mat4_identity());
 			}
+
+			log_lights();
 		}
 		else	// no scene: use hardcoded plane and torus
 		{

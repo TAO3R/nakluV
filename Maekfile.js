@@ -37,6 +37,7 @@ const main_objs = [
 	maek.CPP('Helpers.cpp'),
 	maek.CPP('SceneViewer/SceneViewer.cpp'),
 	maek.CPP('Materials/Materials.cpp'),
+	maek.CPP('Lights/Lights.cpp'),
 	maek.CPP('main.cpp'),
 ];
 

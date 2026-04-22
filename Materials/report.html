@@ -139,24 +139,28 @@ code var {
 </head>
 <body>
 <h1>A2: Materials
-<span class="subtitle">by <span class="placeholder">Jim McCann (jmccann)</span></span>
+<span class="subtitle">by <span>Tao Jin (tjin2)</span></span>
 </h1>
 
 <!-- of course, delete these class="placeholder" notes in your report: -->
 
 <p>
-Summarize, in about one paragraph, your approach to the materials assignment.
-How did you structure your code?
-What's cool about it? Are there parts you weren't able to complete?
+For the materials assignment, I extended the viewer from A1 to support environment cubemaps, tone mapping,
+lambertian diffuse lighting with a pre-convolved irradiance cubemap, tangent-space normal mapping, and
+physically-based rendering (PBR) using the split-sum approximation.
+I wrote a standalone <code>cube</code> utility that pre-processes environment cubemaps on the CPU (for lambertian)
+and via Vulkan compute shaders (for GGX and BRDF LUT).
+On the viewer side, I organized material-related loading code in <code>Materials/Materials.cpp</code>,
+pipeline setup in <code>Tutorial-ObjectsPipeline.cpp</code>, and resource binding in <code>Tutorial.cpp</code>.
+The pipeline now uses 8 descriptor sets total. All material types share the same vertex/fragment shader pair,
+with a push-constant <code>material_type</code> used to branch in the fragment shader.
 </p>
 
 <h2>My Model <span class="atag creative">A2-create</span></h2>
 
 <p>
-<!-- Describe the model and texture you created and include a screen recording showing it running in real-time: -->
-I created a retro-style television with a simple table.
-A metal-looking normal map was added to added details on the television.
-
+I created a retro-style television sitting on a simple table.
+I added a metal-looking normal map to give the television surface some extra detail and texture.
 </p>
 
 <!-- <video>
@@ -175,53 +179,50 @@ A metal-looking normal map was added to added details on the television.
 </video>
 
 <p>
-<!-- Describe your creation process for the model and texture. -->
-A plate was created and used boolean to remove some stripes.
-Thickness was added to approximate the shape of a table.
-Lots of subdivision and bevel were added to make it smooth.
-Another plate was added with another subdivision in the middle.
-Extrude tool was used to pull out the middle plate as the table support.
-Subdivision was applied to make it smooth.<br>
+I started with a plate in Blender and used a boolean modifier to cut out some stripes.
+I added thickness to approximate the shape of a table, then applied lots of subdivision and bevel to make it smooth.
+I added another plate with a subdivision in the middle and used the extrude tool to pull it out as the table support,
+then applied subdivision again to smooth it out.<br>
 
-A cube was added with loopcuts to add more edges. Editing these new faces to make them into the shape of a TV.
-Bevel some edges to make it more detailed.
-Substance painter was used to add pbr material including albedo, metallic and normal map.<br>
+For the TV, I added a cube and used loopcuts to add more edges.
+I edited the new faces to shape it into a television, then beveled some edges to add detail.
+I used Substance Painter to create PBR materials including albedo, metallic, and normal map textures.<br>
 
-<code>ox_bridge_morning</code> was used as the environment map.
+I used <code>ox_bridge_morning</code> as the environment map for the scene.
 </p>
 
 <h2>Using the Cube Utility</h2>
 
 <p>
-The <code>cube</code> utility (<code>bin/cube.exe</code>) is a standalone command-line tool that preprocesses
-environment cubemaps for use by the real-time viewer.
+I wrote a standalone command-line tool called <code>cube</code> (<code>bin/cube.exe</code>) that preprocesses
+environment cubemaps for the real-time viewer.
 It reads and writes cubemaps as RGBE8-encoded PNG images in a vertical-strip layout
 (one square face per row, in +X, &minus;X, +Y, &minus;Y, +Z, &minus;Z order).
 </p>
 
 <p>
-The typical workflow has three steps:
+The typical workflow I follow has three steps:
 </p>
 <ol>
 <li><b>Assemble a cubemap</b> (if needed).
-If you have 6 separate face images (e.g., from an external panorama-to-cubemap converter),
-merge them into a single vertical-strip PNG:
-<code>bin/cube --merge-faces px.png nx.png py.png ny.png pz.png nz.png -o env.png</code>
-This was for assembling the cubemap's 6 faces from online converters that receives a panorama image and converts it to a cubemap.
+If I have 6 separate face images (e.g., from an external panorama-to-cubemap converter),
+I merge them into a single vertical-strip PNG:
+<code>bin/cube --merge-faces px.png nx.png py.png ny.png pz.png nz.png -o env.png</code>.
+I used this for assembling cubemap faces from online converters that take a panorama image and split it into 6 faces.
 </li>
 <li><b>Precompute diffuse IBL</b>.
-Convolve the environment cubemap into a small irradiance lookup cubemap for
+I convolve the environment cubemap into a small irradiance lookup cubemap for
 <code>"lambertian"</code> materials:
 <code>bin/cube env.png --lambertian env.lambertian.png --size 32</code>.
 The <code>--size</code> flag controls the output face resolution (default 16); even small sizes
 produce smooth results because the cosine-weighted integral is very low-frequency.
 </li>
 <li><b>Precompute specular IBL</b> (for <code>"pbr"</code> materials).
-Pre-filter the environment with the GGX NDF at multiple roughness levels and generate the
+I pre-filter the environment with the GGX NDF at multiple roughness levels and generate the
 split-sum BRDF LUT:
 <code>bin/cube env.png --ggx env.ggx.png</code> and
 <code>bin/cube --brdf-lut brdf_lut.bin</code>.
-These two operations use Vulkan compute shaders for performance; the BRDF LUT does not require an input cubemap.
+I implemented both of these as Vulkan compute shaders for performance; the BRDF LUT does not require an input cubemap.
 </li>
 </ol>
 
@@ -229,16 +230,16 @@ These two operations use Vulkan compute shaders for performance; the BRDF LUT do
 The viewer automatically discovers the precomputed maps by convention: for a scene that references
 <code>env.png</code> as its environment radiance cubemap, it looks for <code>env.lambertian.png</code>
 in the same directory.
-No extra viewer flags are needed&mdash;just place the precomputed files next to the scene and run
+No extra viewer flags are needed&mdash;I just place the precomputed files next to the scene and run
 <code>bin/viewer --scene scene.s72</code>.
 </p>
 
 <h3>Command-line Arguments (Cube Utility)</h3>
 
 <p>
-The <code>cube</code> utility (<code>bin/cube.exe</code>) processes RGBE8-encoded vertical-strip cubemap PNGs.
+The <code>cube</code> utility processes RGBE8-encoded vertical-strip cubemap PNGs.
 All cubemap images use the +X, &minus;X, +Y, &minus;Y, +Z, &minus;Z face order, stored as a <code>W&times;6W</code> vertical strip.
-Multiple operations can be combined in a single invocation (except <code>--merge-faces</code>, which runs standalone).
+I designed it so that multiple operations can be combined in a single invocation (except <code>--merge-faces</code>, which runs standalone).
 </p>
 
 <ul>
@@ -278,7 +279,7 @@ into the format expected by the viewer and the other cube utility operations.</l
 <h3>Command-line Arguments (Viewer)</h3>
 
 <p>
-The viewer (<code>bin/viewer.exe</code>) accepts the following command-line flags.
+I also added the following command-line flags to the viewer (<code>bin/viewer.exe</code>):
 </p>
 
 <ul>
@@ -303,12 +304,21 @@ These thoughts may also help you improve the code as you work on it in A3 and be
 <!-- What functions and data structures in your code are involved with loading environment cube maps and converting them from RGBE8 format to the format you chose to use for them on-GPU?
 (And what format did you choose for that?). -->
 
-I chose <code>VK_FORMAT_R32G32B32A32_SFLOAT</code>(RGBA 32-bit float per channel) as the on-GPU format. This is what the decoded HDR data is uploaded as.
-I defined <code>Tutorial::load_environment_cubemap</code> that loads the RGBE8 PNG, converts it to float HDR RGBA, creates the cubemap image, uploads it, then creates <code>environment_cubemap_view</code>
-+<code>environment_cubemap_sampler</code>.
-I defined a <code>environment_cubemap</code> to store the cubemap as <code>Helpers::AllocatedImage</code> with <code>arrayLayers</code> support added for cubemaps.
-I defined <code>Helpers::create_cube_image</code> that creates a <code>VkImage</code> with <code>VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT</code> and <code>arrayLayers = 6</code>.
-I defined <code>Helpers::transfer_to_cube_image</code> that stages and copies 6 faces into the cube image and transitions it for shader sampling.
+I chose <code>VK_FORMAT_R32G32B32A32_SFLOAT</code> (RGBA 32-bit float per channel) as the on-GPU format for environment cubemaps.
+I implemented <code>Tutorial::load_environment_cubemap</code> in <code>Materials/Materials.cpp</code>,
+which uses <code>stbi_load</code> to load the RGBE8 PNG from disk, decodes each pixel's RGBE exponent into float HDR RGBA,
+creates the cubemap image, uploads it, and then creates <code>environment_cubemap_view</code> and <code>environment_cubemap_sampler</code>.
+To support cubemaps, I added an <code>arrayLayers</code> field to <code>Helpers::AllocatedImage</code>
+and wrote <code>Helpers::create_cube_image</code> (creates a <code>VkImage</code> with <code>VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT</code>
+and <code>arrayLayers = 6</code>) and <code>Helpers::transfer_to_cube_image</code> (stages and copies 6 faces into the cube image and transitions it for shader sampling).
+I then added a descriptor set layout for the cubemap (set 3) with a <code>VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER</code> binding,
+extended the descriptor pool, allocated <code>environment_cubemap_descriptors</code>, and bound set 3 in the draw loop.
+I created a push constant struct <code>ObjectsPipeline::Push</code> with <code>material_type</code>, <code>eye_x</code>, <code>eye_y</code>, <code>eye_z</code>
+so each instance can tell the fragment shader which material it is and where the camera is.
+In <code>objects.frag</code>, I declared <code>samplerCube CUBEMAP</code> at set 3 and used <code>material_type</code> to switch behavior:
+for environment materials I sample the cubemap using the surface normal direction,
+for mirror materials I reflect the view direction about the normal and sample along the reflection,
+and for lambertian/PBR materials I keep the existing lighting path.
 
 <!-- <br>
 cubemap helper function support <br>
@@ -370,7 +380,7 @@ Lambertian/PBR: keep existing lighting path (2D texture albedo + sky/sun lightin
 
 <p>
 <!-- Provide evidence that your code can load environment maps and display <code>"environment"</code> and <code>"mirror"</code> materials. -->
-Loading environment map and display <code>environment</code> and <code>mirror</code> materials:<br><br>
+Here I'm loading the environment map and displaying <code>environment</code> and <code>mirror</code> materials:<br><br>
 <video class="center-video" width="640" height="360" controls>
 	<source src="report_files/env_Materials.s72.mp4" type="video/mp4" />
 </video>
@@ -380,17 +390,17 @@ Loading environment map and display <code>environment</code> and <code>mirror</c
 
 <p>
 <!-- Describe, in a few sentences, how your display code deals with tone mapping, and what you chose for your custom non-linear tone mapping curve. -->
-All fragment radiance values are first multiplied by an exposure factor of 2^E
-(where E defaults to 0, i.e., a multiplier of 1.0) and then passed through a tone mapping operator before being written to the framebuffer.
-The exposure and tone mapping mode are stored in the World uniform buffer and uploaded to the GPU each frame,
-so all material types (Lambertian, environment, mirror) share the same tone mapping path.
-A shared GLSL include file (<code>Materials/tonemap.glsl</code>) provides the <code>apply_tone_map</code> function,
-which is called as the final step in objects.frag before writing outColor.
+I multiply all fragment radiance values by an exposure factor of 2^E
+(where E defaults to 0, giving a multiplier of 1.0) and then pass them through a tone mapping operator before writing to the framebuffer.
+I store the exposure and tone mapping mode in the <code>World</code> uniform buffer and upload them to the GPU each frame,
+so all material types (lambertian, environment, mirror, PBR) share the same tone mapping path.
+I wrote a shared GLSL include file (<code>Materials/tonemap.glsl</code>) that provides the <code>apply_tone_map</code> function,
+which I call as the final step in <code>objects.frag</code> before writing <code>outColor</code>.
 
-For the custom non-linear tone mapping operator, I chose the Reinhard operator (<code>c / (1 + c)</code>),
-which maps HDR radiance values into the [0, 1] range by compressing highlights while preserving detail in darker regions.
-It is a simple per-channel operation that gracefully prevents bright areas from clipping to white, making it well-suited for scenes lit by HDR environment probes.
-The operator is selectable via the <code>--tone-map reinhard</code> command-line option.
+For my custom non-linear tone mapping operator, I chose the Reinhard operator (<code>c / (1 + c)</code>).
+It maps HDR radiance values into the [0, 1] range by compressing highlights while preserving detail in darker regions.
+It's a simple per-channel operation that gracefully prevents bright areas from clipping to white, which makes it well-suited for scenes lit by HDR environment probes.
+I made it selectable via the <code>--tone-map reinhard</code> command-line option.
 </p>
 
 <p>
@@ -512,15 +522,14 @@ window.addEventListener('load', () => {
 <h3>Lambertian Diffuse <span class="atag">A2-diffuse</span></h3>
 
 <p>
-<!-- Where and how does your code implement the <code>"lambertian"</code> material? -->
-The lambertian material is implemented across three stages: an offline precomputation utility,
-a runtime loading and GPU resource pipeline, and a fragment shader that dispatches based on material type.
+I implemented the lambertian material in three stages: an offline precomputation utility,
+runtime loading and GPU resource setup, and fragment shader logic that dispatches based on material type.
 </p>
 
 <p>
 <b>1. Offline precomputation (<code>Materials/cube.cpp</code>)</b><br>
-A standalone <code>cube</code> utility pre-convolves an environment radiance cubemap into a lambertian irradiance lookup cubemap.
-For each output texel with direction <b>n</b>, it numerically integrates the rendering equation for a perfect diffuse surface:
+I wrote the <code>cube</code> utility to pre-convolve an environment radiance cubemap into a lambertian irradiance lookup cubemap.
+For each output texel with direction <b>n</b>, I numerically integrate the rendering equation for a perfect diffuse surface:
 <code>E(n) = (1/&pi;) &sum; L(&omega;) &middot; max(dot(n, &omega;), 0) &middot; d&omega;</code>,
 where <code>d&omega;</code> is the solid angle of each input texel, computed using the cube-face Jacobian
 <code>4 / (N&sup2; &middot; (s&sup2; + t&sup2; + 1)<sup>3/2</sup>)</code>.
@@ -530,37 +539,37 @@ The output is a small (default 16&times;16 per face) RGBE-encoded vertical-strip
 
 <p>
 <b>2. Runtime loading and GPU plumbing</b><br>
-<code>Tutorial::load_lambertian_cubemap()</code> (in <code>Materials/Materials.cpp</code>) derives the
-<code>.lambertian.png</code> path from the environment's radiance texture path, loads it with stb_image,
+I implemented <code>Tutorial::load_lambertian_cubemap()</code> in <code>Materials/Materials.cpp</code>.
+It derives the <code>.lambertian.png</code> path from the environment's radiance texture path, loads it with stb_image,
 decodes RGBE to RGBA32F, creates a 6-layer cube image via <code>Helpers::create_cube_image</code>,
 uploads it via <code>Helpers::transfer_to_cube_image</code>, and creates a <code>VkImageView</code> (cube type) and <code>VkSampler</code>.
-In the constructor (<code>Tutorial.cpp</code>), the texture descriptor pool is sized to include the lambertian cubemap.
-A <code>VkDescriptorSet</code> is allocated using <code>ObjectsPipeline::set4_LambertianCubemap</code>
-(a <code>COMBINED_IMAGE_SAMPLER</code> layout at set 4, binding 0) and written with the lambertian cubemap view and sampler.
-A <code>has_lambertian</code> flag (<code>uint32_t</code>) is added to the <code>ObjectsPipeline::World</code> uniform struct.
-Each frame in <code>update()</code>, it is set to 1 if the lambertian cubemap was successfully loaded, 0 otherwise.
-During rendering, descriptor set 4 is bound once before the per-instance draw loop when the lambertian cubemap is available.
+In the constructor (<code>Tutorial.cpp</code>), I sized the texture descriptor pool to include the lambertian cubemap.
+I allocated a <code>VkDescriptorSet</code> using <code>ObjectsPipeline::set4_LambertianCubemap</code>
+(a <code>COMBINED_IMAGE_SAMPLER</code> layout at set 4, binding 0) and wrote it with the lambertian cubemap view and sampler.
+I also added a <code>has_lambertian</code> flag (<code>uint32_t</code>) to the <code>ObjectsPipeline::World</code> uniform struct.
+Each frame in <code>update()</code>, I set it to 1 if the lambertian cubemap was successfully loaded, 0 otherwise.
+During rendering, I bind descriptor set 4 once before the per-instance draw loop when the lambertian cubemap is available.
 </p>
 
 <p>
 <b>3. Fragment shader (<code>objects.frag</code>)</b><br>
 Each instance's <code>material_type</code> is passed via push constants.
 When <code>material_type == 0</code> (Lambertian), the shader checks the <code>has_lambertian</code> uniform flag.
-If the pre-convolved cubemap is available, it samples the lambertian irradiance cubemap along the surface normal:
+If the pre-convolved cubemap is available, I sample the lambertian irradiance cubemap along the surface normal:
 <code>e = texture(LAMBERTIAN_CUBEMAP, n).rgb;</code>
 This single texture lookup replaces the analytical sky+sun hemisphere approximation.
-The result is multiplied by the albedo from the material's 2D texture to produce the final diffuse radiance:
+I multiply the result by the albedo from the material's 2D texture to produce the final diffuse radiance:
 <code>radiance = e * albedo;</code>
 If no lambertian cubemap is loaded, the shader falls back to the original analytical lighting model
 using <code>SKY_ENERGY</code>, <code>SKY_DIRECTION</code>, <code>SUN_ENERGY</code>, and <code>SUN_DIRECTION</code>.
 The key insight is that the heavy hemisphere integral is computed once offline by the cube utility,
-allowing the runtime shader to replace a costly per-fragment integration with a single cubemap lookup
-indexed by the surface normal&mdash;which is valid because the cosine-weighted hemisphere integral
+so at runtime the shader can replace a costly per-fragment integration with a single cubemap lookup
+indexed by the surface normal&mdash;which works because the cosine-weighted hemisphere integral
 depends only on the normal direction, not the surface position.
 </p>
 
 <p>
-Lambertain cubemap pre-filtering:
+Here I'm running the lambertian cubemap pre-filtering:
 <video class="center-video" width="640" height="360" controls>
 	<source src="report_files/diffuse_cube_utility.mp4" type="video/mp4" />
 </video>
@@ -568,7 +577,7 @@ Lambertain cubemap pre-filtering:
 
 <p>
 <br>
-Cubemap viewer:
+The cubemap viewer shows the original environment and the generated lambertian cubemap:
 <div class="image-row">
     <img src="report_files/diffuse_environment.png" alt="environment cubemap used to generate lambertian cubemap">
     <img src="report_files/diffuse_lambertian_cubemap.png" alt="lambertian cubemap generated">
@@ -635,60 +644,60 @@ window.addEventListener('load', () => {
 <h3>Normal Mapping <span class="atag">A2-normal</span></h3>
 
 <p>
-Normal mapping is implemented in two stages: texture loading on the CPU side and TBN-based normal perturbation in the fragment shader.
+I implemented normal mapping in two stages: texture loading on the CPU side and TBN-based normal perturbation in the fragment shader.
 </p>
 
 <p>
 <b>1. Vertex format and tangent loading</b><br>
-The <code>PosNorTexVertex</code> struct (in <code>PosNorTexVertex.hpp</code>) includes a <code>Tangent</code> field
-(<code>vec4</code>: <code>.xyz</code> = tangent direction, <code>.w</code> = bitangent sign),
+I added a <code>Tangent</code> field to the <code>PosNorTexVertex</code> struct (in <code>PosNorTexVertex.hpp</code>)
+as a <code>vec4</code> (<code>.xyz</code> = tangent direction, <code>.w</code> = bitangent sign),
 giving a 48-byte stride that matches the <code>.b72</code> on-disk layout exactly.
-During mesh loading (<code>Tutorial.cpp</code>), the <code>"TANGENT"</code> attribute is read from <code>.b72</code>
-data at its declared offset (default 24) and stored per-vertex.
+During mesh loading in <code>Tutorial.cpp</code>, I read the <code>"TANGENT"</code> attribute from <code>.b72</code>
+data at its declared offset (default 24) and store it per-vertex.
 Meshes without a tangent attribute get a default of <code>(1, 0, 0, +1)</code>.
 </p>
 
 <p>
 <b>2. Normal map texture loading (<code>Materials/Materials.cpp</code>)</b><br>
-<code>Tutorial::build_normal_map_textures()</code> first creates a 1&times;1 default normal map with pixel value
-<code>(128, 128, 255, 255)</code>, which decodes to <code>(0, 0, 1)</code> in tangent space after the <code>*2&minus;1</code>
-bias&mdash;i.e., the unperturbed normal.
-It then iterates over all scene materials: for each material whose <code>normal_map</code> is non-null and
-of type <code>flat</code>, it loads the PNG via <code>stbi_load</code> (4 channels) and creates a GPU image with
+I wrote <code>Tutorial::build_normal_map_textures()</code>, which first creates a 1&times;1 default normal map with pixel value
+<code>(128, 128, 255, 255)</code>&mdash;this decodes to <code>(0, 0, 1)</code> in tangent space after the <code>*2&minus;1</code>
+bias, i.e., the unperturbed normal.
+I then iterate over all scene materials: for each material whose <code>normal_map</code> is non-null and
+of type <code>flat</code>, I load the PNG via <code>stbi_load</code> (4 channels) and create a GPU image with
 <code>VK_FORMAT_R8G8B8A8_UNORM</code>&mdash;critically <em>not</em> <code>_SRGB</code>, because normal maps
 encode linear direction data, not perceptual color.
-The resulting index into <code>normal_map_textures</code> is stored in <code>mat_to_normal_tex</code>;
+I store the resulting index into <code>normal_map_textures</code> in <code>mat_to_normal_tex</code>;
 materials without a normal map map to the default (index 0).
 </p>
 
 <p>
 <b>3. Descriptor set and pipeline plumbing</b><br>
-A new descriptor set layout <code>set5_NormalMap</code> (1 combined image sampler, fragment stage) is added to the
+I added a new descriptor set layout <code>set5_NormalMap</code> (1 combined image sampler, fragment stage) to the
 objects pipeline in <code>Tutorial-ObjectsPipeline.cpp</code>, bringing the total to 6 descriptor sets.
-In the constructor (<code>Tutorial.cpp</code>), one <code>VkDescriptorSet</code> is allocated per normal map texture
+In the constructor (<code>Tutorial.cpp</code>), I allocate one <code>VkDescriptorSet</code> per normal map texture
 from the shared descriptor pool.
 Each <code>ObjectInstance</code> carries a <code>normal_map_texture</code> index (set from <code>mat_to_normal_tex</code>
-during <code>traverse_node</code>), and in the render loop, the appropriate set 5 descriptor is bound per instance
+during <code>traverse_node</code>), and in the render loop I bind the appropriate set 5 descriptor per instance
 before each draw call.
 Because every material always has a valid normal map descriptor bound (the 1&times;1 default for materials without one),
-the shader needs no branching flag.
+the shader doesn't need a branching flag.
 </p>
 
 <p>
 <b>4. Vertex shader (<code>objects.vert</code>)</b><br>
-The vertex shader accepts <code>Tangent</code> at location 2 and outputs the world-space tangent vector
-(transformed by <code>WORLD_FROM_LOCAL_NORMAL</code>, the same matrix used for the normal) and the
+I have the vertex shader accept <code>Tangent</code> at location 2 and output the world-space tangent vector
+(transformed by <code>WORLD_FROM_LOCAL_NORMAL</code>, the same matrix I use for the normal) and the
 bitangent sign (<code>Tangent.w</code>) as separate varyings.
 </p>
 
 <p>
 <b>5. Fragment shader (<code>objects.frag</code>)</b><br>
-The TBN matrix is constructed from the interpolated normal and tangent:
-the tangent is re-orthogonalized via Gram&ndash;Schmidt (<code>T = normalize(T &minus; dot(T, N) * N)</code>),
-the bitangent is computed as <code>B = cross(N, T) * bitangent_sign</code>,
-and the TBN matrix is <code>mat3(T, B, N)</code>.
-The normal map is sampled with <code>texture(NORMAL_MAP, texCoord).rgb * 2.0 &minus; 1.0</code>
-to undo the <code>n * 0.5 + 0.5</code> storage bias, then the tangent-space normal is transformed to
+I construct the TBN matrix from the interpolated normal and tangent:
+I re-orthogonalize the tangent via Gram&ndash;Schmidt (<code>T = normalize(T &minus; dot(T, N) * N)</code>),
+compute the bitangent as <code>B = cross(N, T) * bitangent_sign</code>,
+and build the TBN matrix as <code>mat3(T, B, N)</code>.
+I sample the normal map with <code>texture(NORMAL_MAP, texCoord).rgb * 2.0 &minus; 1.0</code>
+to undo the <code>n * 0.5 + 0.5</code> storage bias, then transform the tangent-space normal to
 world space via <code>n = normalize(TBN * map_n)</code>.
 This perturbed normal <code>n</code> is then used for all subsequent lighting: lambertian diffuse,
 cubemap lookups, mirror reflection, etc.
@@ -696,7 +705,7 @@ cubemap lookups, mirror reflection, etc.
 
 <p>
 <br>
-Normal mapping:
+Here I'm showing the normal mapping in action:
 <video class="center-video" width="640" height="360" controls>
 	<source src="report_files/nor_Materials.s72.mp4" type="video/mp4" />
 </video>
@@ -711,24 +720,24 @@ Can you make normal mapping a bottleneck? (I'm not actually sure if you can! Ask
 <h3>Physically-Based Material <span class="atag">A2-pbr</span></h3>
 
 <p>
-The <code>"pbr"</code> material is implemented using the split-sum approximation of the rendering equation,
-spanning offline precomputation in the <code>cube</code> utility (Vulkan compute), runtime resource loading,
-and a fragment shader that combines specular and diffuse IBL.
+I implemented the <code>"pbr"</code> material using the split-sum approximation of the rendering equation.
+This spans offline precomputation in the <code>cube</code> utility (using Vulkan compute shaders), runtime resource loading,
+and a fragment shader branch that combines specular and diffuse IBL.
 </p>
 
 <p>
 <b>1. GGX pre-filtered cubemap (<code>cube --ggx</code>)</b><br>
-The <code>compute_ggx</code> function in <code>Materials/cube.cpp</code> generates a mip chain of pre-filtered
+I wrote a <code>compute_ggx</code> function in <code>Materials/cube.cpp</code> that generates a mip chain of pre-filtered
 environment cubemaps at 5 roughness levels (0.2, 0.4, 0.6, 0.8, 1.0),
 each stored as a halved-resolution RGBE8 vertical-strip PNG
 (e.g., <code>env.ggx.1.png</code> through <code>env.ggx.5.png</code>).
-The input RGBE8 cubemap is decoded to RGBA32F on the CPU, uploaded to a <code>VkImage</code>
+I decode the input RGBE8 cubemap to RGBA32F on the CPU, upload it to a <code>VkImage</code>
 with <code>VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT</code> and 6 array layers,
-and sampled via a cube <code>VkImageView</code> + linear <code>VkSampler</code>.
+and sample it via a cube <code>VkImageView</code> + linear <code>VkSampler</code>.
 </p>
 
 <p>
-A Vulkan compute shader (<code>Materials/ggx_convolve.comp</code>) performs the integration.
+I wrote a Vulkan compute shader (<code>Materials/ggx_convolve.comp</code>) to perform the integration.
 For each output texel with normal direction <b>N</b>, it importance-samples the GGX NDF
 using the Hammersley low-discrepancy sequence (default 1024 samples).
 For each sample, it generates a half-vector <b>H</b> via
@@ -736,16 +745,16 @@ For each sample, it generates a half-vector <b>H</b> via
 reflects to get the light direction <b>L</b> = <code>2&middot;dot(V,H)&middot;H&nbsp;&minus;&nbsp;V</code>,
 and accumulates <code>L(L)&middot;max(dot(N,L),0)</code>, weighting by <code>NdotL</code>.
 The final value is normalized by the accumulated weight: <code>color /= max(weight, 0.001)</code>.
-The shader dispatches 6 times per mip level (once per face),
+I dispatch the shader 6 times per mip level (once per face),
 with push constants carrying <code>roughness</code>, <code>face</code>, <code>output_size</code>, and <code>num_samples</code>.
-After each face, the output image is copied to a staging buffer,
-then the 6 faces are RGBE-encoded and written as a vertical-strip PNG.
+After each face, I copy the output image to a staging buffer,
+then RGBE-encode the 6 faces and write them as a vertical-strip PNG.
 </p>
 
 <p>
 <b>2. Environment BRDF LUT (<code>cube --brdf-lut</code>)</b><br>
-The <code>compute_brdf_lut</code> function generates a 2D lookup table (the second part of the split-sum)
-using a Vulkan compute shader (<code>Materials/brdf_lut.comp</code>).
+I wrote a <code>compute_brdf_lut</code> function that generates a 2D lookup table (the second part of the split-sum)
+using another Vulkan compute shader (<code>Materials/brdf_lut.comp</code>).
 The LUT is parameterized by <code>NdotV</code> (x-axis) and <code>roughness</code> (y-axis).
 For each texel, the shader importance-samples the GGX NDF and accumulates the <em>scale</em> and <em>bias</em>
 terms of the Fresnel split:
@@ -753,49 +762,49 @@ terms of the Fresnel split:
 where <code>F<sub>c</sub> = (1 &minus; VdotH)<sup>5</sup></code> (Schlick) and
 <code>G_Vis = G(NdotV, NdotL, &alpha;) &middot; VdotH / (NdotH &middot; NdotV)</code>
 using the Smith&ndash;Schlick&ndash;GGX geometry function with <code>k = (&alpha;&sup2;)/2</code>.
-The output is a single <code>VK_FORMAT_R16G16_SFLOAT</code> image (16-bit float, 2 channels),
-stored on disk as a raw binary file with an 8-byte header (width, height as <code>uint32_t</code>)
+I store the output as a single <code>VK_FORMAT_R16G16_SFLOAT</code> image (16-bit float, 2 channels),
+written to disk as a raw binary file with an 8-byte header (width, height as <code>uint32_t</code>)
 followed by the pixel data.
-Default resolution is 512&times;512 with 1024 samples per texel.
+I used 512&times;512 resolution with 1024 samples per texel as defaults.
 </p>
 
 <p>
 <b>3. Runtime loading</b><br>
-<code>Tutorial::load_ggx_cubemap()</code> (in <code>Materials/Materials.cpp</code>) discovers
+I implemented <code>Tutorial::load_ggx_cubemap()</code> in <code>Materials/Materials.cpp</code>, which discovers
 GGX mip files by scanning for <code>env.ggx.1.png</code>, <code>env.ggx.2.png</code>, etc.
-It loads each mip&rsquo;s RGBE8 PNG, decodes to RGBA32F, and uploads all mip levels into a single
+I load each mip&rsquo;s RGBE8 PNG, decode to RGBA32F, and upload all mip levels into a single
 <code>VkImage</code> with 6 array layers and <code>mipLevels = num_mips + 1</code>
 (mip 0 is the original full-resolution environment).
-The <code>VkSampler</code> is configured with <code>maxLod = float(num_mips)</code>
+I configure the <code>VkSampler</code> with <code>maxLod = float(num_mips)</code>
 so that <code>textureLod</code> can interpolate between mip levels by roughness.
-If no GGX mip files are found, a 1&times;1 fallback cubemap is created.
+If no GGX mip files are found, I create a 1&times;1 fallback cubemap so that descriptor set 7 is always valid.
 </p>
 
 <p>
-<code>Tutorial::load_brdf_lut()</code> reads the binary LUT from <code>brdf_lut.bin</code>,
+I also implemented <code>Tutorial::load_brdf_lut()</code>, which reads the binary LUT from <code>brdf_lut.bin</code>,
 creates a 2D <code>VK_FORMAT_R16G16_SFLOAT</code> image, and uploads the data.
-If the file is missing, a 1&times;1 fallback (0.0, 0.0) is used.
-Both the GGX cubemap and BRDF LUT are bound together in descriptor set 7
+If the file is missing, I create a 1&times;1 fallback (0.0, 0.0).
+I bind both the GGX cubemap and BRDF LUT together in descriptor set 7
 (<code>set7_PBREnv</code>: binding 0 = <code>samplerCube GGX_CUBEMAP</code>,
 binding 1 = <code>sampler2D BRDF_LUT</code>).
-Per-material roughness and metalness textures are bound at set 6
+Per-material roughness and metalness textures go in set 6
 (<code>set6_PBRMaps</code>: binding 0 = <code>ROUGHNESS_MAP</code>,
 binding 1 = <code>METALNESS_MAP</code>).
 </p>
 
 <p>
 <b>4. Fragment shader (<code>objects.frag</code>)</b><br>
-When <code>material_type == 3</code> (PBR), the shader implements the split-sum approximation:
+When <code>material_type == 3</code> (PBR), the shader runs my split-sum approximation:
 </p>
 <ul>
-<li><b>Specular:</b> The reflection vector <b>R</b> = <code>reflect(&minus;V, n)</code> is used to
+<li><b>Specular:</b> I compute the reflection vector <b>R</b> = <code>reflect(&minus;V, n)</code> and use it to
 sample the GGX pre-filtered cubemap at a LOD determined by roughness:
 <code>textureLod(GGX_CUBEMAP, R, roughness * ggx_max_lod)</code>.
-The BRDF LUT is sampled at <code>(NdotV, roughness)</code> to get the scale and bias terms.
+I sample the BRDF LUT at <code>(NdotV, roughness)</code> to get the scale and bias terms.
 The specular contribution is <code>prefilteredColor * (F0 * envBRDF.x + envBRDF.y)</code>,
 where <code>F0 = mix(0.04, albedo, metalness)</code>.</li>
-<li><b>Diffuse:</b> A Fresnel-weighted diffuse factor
-<code>kD = (1 &minus; F) * (1 &minus; metalness)</code> is computed using the full Schlick Fresnel.
+<li><b>Diffuse:</b> I compute a Fresnel-weighted diffuse factor
+<code>kD = (1 &minus; F) * (1 &minus; metalness)</code> using the full Schlick Fresnel.
 The irradiance comes from the lambertian pre-convolved cubemap (if available) or the analytical
 sky+sun fallback. The diffuse contribution is <code>kD * albedo * irradiance</code>.</li>
 <li>The final radiance is <code>diffuse + specular</code>, then passed through tone mapping.</li>
@@ -803,14 +812,14 @@ sky+sun fallback. The diffuse contribution is <code>kD * albedo * irradiance</co
 
 <p>
 <br>
-<code>"pbr"</code> material working:
+Here is the <code>"pbr"</code> material working in my viewer:
 
 <img src="report_files/pbr_materials.s72.png" alt="pbr materials in materials.s72" class="center_image">
 </p>
 
 <p>
 <br>
-Pre-filter cube maps with the cosine-weighted GGX normal distribution function:
+Here I'm pre-filtering cubemaps with the cosine-weighted GGX normal distribution function:
 <video class="center-video" width="640" height="360" controls>
 	<source src="report_files/pbr_mip-level_generation.mp4" type="video/mp4" />
 </video>
@@ -838,7 +847,7 @@ Pre-filter cube maps with the cosine-weighted GGX normal distribution function:
 
 <br>
 <p>
-BRDF pre-integration (Karis's vs. Mine):
+I compared my BRDF pre-integration result with the one in Karis's notes (left is Karis's, right is mine):
 <div class="image-row">
     <img src="report_files/pbr_brdf-lut_Karis.png" alt="Karis">
     <img src="report_files/pbr_brdf-lut.png" alt="scene rendered with lambertian cubemap">
