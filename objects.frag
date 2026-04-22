@@ -38,6 +38,83 @@ layout(set = 6, binding = 1) uniform sampler2D METALNESS_MAP;
 layout(set = 7, binding = 0) uniform samplerCube GGX_CUBEMAP;
 layout(set = 7, binding = 1) uniform sampler2D BRDF_LUT;
 
+// A3-lights (must match Tutorial::GPULight / GPULightHeader in C++)
+struct GPULight {
+    uint   type;      // 0 = sun, 1 = sphere, 2 = spot
+    float  _pad0, _pad1, _pad2;
+    vec3   position;
+    float  _ppos;
+    vec3   direction;
+    float  _pdir;
+    vec3   tint;
+    float  power;     // sun: strength; sphere/spot: power
+    float  radius;
+    float  limit;
+    float  fov;
+    float  blend;
+    float  angle;     // sun only
+    float  shadow;    // resolution hint; unused in lighting for now
+    float  _pe, _pf;
+};
+
+layout(std430, set = 8, binding = 0) buffer Lights {
+    uint     light_count;
+    uint     _h0, _h1, _h2;
+    GPULight lights[];
+} g_lights;
+
+const float A3_PI = 3.14159265358979323846;
+
+// Diffuse (Lambert) direct light from scene lights: contribution before albedo/BRDF (irradiance-like)
+vec3 evalDiffuseDirectLights(vec3 n, vec3 worldPos) {
+    vec3 sum = vec3(0.0);
+    for (uint i = 0u; i < g_lights.light_count; i++) {
+        GPULight Lg = g_lights.lights[i];
+        if (Lg.type == 0u) {
+            // Sun: direction is toward scene; N·L, strength in power
+            vec3 L = normalize(Lg.direction);
+            float NdotL = max(0.0, dot(n, L));
+            sum += Lg.tint * Lg.power * NdotL;
+        } else {
+            // Sphere / spot: point at center, inverse-square, limit falloff, spot cone
+            vec3 toLight = Lg.position - worldPos;
+            float d2 = max(dot(toLight, toLight), 1e-8);
+            float d = sqrt(d2);
+            vec3 L = toLight / d;
+            float NdotL = max(0.0, dot(n, L));
+            float atten = Lg.power / (4.0 * A3_PI * d2);
+
+            float limitFalloff = 1.0;
+            if (!isinf(Lg.limit) && Lg.limit > 0.0) {
+                limitFalloff = max(0.0, 1.0 - pow(d / Lg.limit, 4.0));
+            }
+
+            float spotFactor = 1.0;
+            if (Lg.type == 2u) {
+                vec3 wOut = -toLight;                 // from light toward surface
+                vec3 axis = normalize(Lg.direction); // light forward
+                if (Lg.fov > 1e-5) {
+                    float cosDir = dot(normalize(wOut), axis);
+                    float halfOuter = 0.5 * Lg.fov;
+                    float halfInner = halfOuter * (1.0 - Lg.blend);
+                    float cOuter = cos(halfOuter);
+                    float cInner = cos(halfInner);
+                    if (abs(cInner - cOuter) < 1e-4) {
+                        spotFactor = float(cosDir >= cOuter);
+                    } else {
+                        spotFactor = smoothstep(cOuter, cInner, cosDir);
+                    }
+                } else {
+                    spotFactor = 1.0;
+                }
+            }
+
+            sum += Lg.tint * atten * NdotL * limitFalloff * spotFactor;
+        }
+    }
+    return sum;
+}
+
 layout(push_constant) uniform PushConstants {
     uint material_type;
     float eye_x, eye_y, eye_z;
@@ -100,6 +177,7 @@ void main() {
             irradiance = SKY_ENERGY * (0.5 * dot(n, SKY_DIRECTION) + 0.5)
                        + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
         }
+        irradiance += evalDiffuseDirectLights(n, position);
         vec3 diffuse = kD * albedo * irradiance;
 
         radiance = diffuse + specular;
@@ -115,6 +193,7 @@ void main() {
             e = SKY_ENERGY * (0.5 * dot(n, SKY_DIRECTION) + 0.5)
                 + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
         }
+        e += evalDiffuseDirectLights(n, position);
 
         radiance = e * albedo;
     }
