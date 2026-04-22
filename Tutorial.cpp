@@ -802,16 +802,16 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		uint32_t per_texture = uint32_t(textures.size());
 		uint32_t per_normal_map = uint32_t(normal_map_textures.size());
 
-		uint32_t has_cubemap = (environment_cubemap_view == VK_NULL_HANDLE) ? 0 : 1;
-		uint32_t has_lambertian = (lambertian_cubemap_view == VK_NULL_HANDLE) ? 0 : 1;
+		// sets 3 and 4 are always allocated (fallback black cubemaps if no env)
+		uint32_t cubemap_sets = 2; // env cubemap (set3) + lambertian cubemap (set4)
 
 		// A2-pbr: count PBR materials for set6 descriptors + 1 default
 		uint32_t num_pbr_mat_sets = 1; // default set6
 		for (auto const &it : scene_S72.materials) {
 			if (std::holds_alternative<S72::Material::PBR>(it.second.brdf)) ++num_pbr_mat_sets;
 		}
-		uint32_t total_sets = per_texture + per_normal_map + has_cubemap + has_lambertian + num_pbr_mat_sets + 1;
-		uint32_t total_descriptors = per_texture + per_normal_map + has_cubemap + has_lambertian
+		uint32_t total_sets = per_texture + per_normal_map + cubemap_sets + num_pbr_mat_sets + 1;
+		uint32_t total_descriptors = per_texture + per_normal_map + cubemap_sets
 			+ num_pbr_mat_sets * 2 + 2;
 
 		std::array< VkDescriptorPoolSize, 1> pool_sizes{
@@ -872,62 +872,56 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
 	}
 
-	{	// A2-env: allocate and write environment cubemap descriptors
-		if (environment_cubemap_view != VK_NULL_HANDLE)
-		{
-			VkDescriptorSetAllocateInfo alloc_info{
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-				.descriptorPool = texture_descriptor_pool,
-				.descriptorSetCount = 1,
-				.pSetLayouts = &objects_pipeline.set3_Cubemap,
-			};
-			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &environment_cubemap_descriptors) );
+	{	// A2-env: allocate and write environment cubemap descriptors (always; fallback black cubemap if no env)
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = texture_descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set3_Cubemap,
+		};
+		VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &environment_cubemap_descriptors) );
 
-			VkDescriptorImageInfo image_info{
-				.sampler = environment_cubemap_sampler,
-				.imageView = environment_cubemap_view,
-				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-			};
-			VkWriteDescriptorSet write{
-				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.dstSet = environment_cubemap_descriptors,
-				.dstBinding = 0,
-				.dstArrayElement = 0,
-				.descriptorCount = 1,
-				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.pImageInfo = &image_info,
-			};
-			vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
-		}
+		VkDescriptorImageInfo image_info{
+			.sampler = environment_cubemap_sampler,
+			.imageView = environment_cubemap_view,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		};
+		VkWriteDescriptorSet write{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = environment_cubemap_descriptors,
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &image_info,
+		};
+		vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
 	}
 
-	{	// A2-diffuse: allocate and write lambertian cubemap descriptors
-		if (lambertian_cubemap_view != VK_NULL_HANDLE)
-		{
-			VkDescriptorSetAllocateInfo alloc_info{
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-				.descriptorPool = texture_descriptor_pool,
-				.descriptorSetCount = 1,
-				.pSetLayouts = &objects_pipeline.set4_LambertianCubemap,
-			};
-			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &lambertian_cubemap_descriptors) );
+	{	// A2-diffuse: allocate and write lambertian cubemap descriptors (always; fallback black cubemap if no env)
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = texture_descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set4_LambertianCubemap,
+		};
+		VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &lambertian_cubemap_descriptors) );
 
-			VkDescriptorImageInfo image_info{
-				.sampler = lambertian_cubemap_sampler,
-				.imageView = lambertian_cubemap_view,
-				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-			};
-			VkWriteDescriptorSet write{
-				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.dstSet = lambertian_cubemap_descriptors,
-				.dstBinding = 0,
-				.dstArrayElement = 0,
-				.descriptorCount = 1,
-				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.pImageInfo = &image_info,
-			};
-			vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
-		}
+		VkDescriptorImageInfo image_info{
+			.sampler = lambertian_cubemap_sampler,
+			.imageView = lambertian_cubemap_view,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		};
+		VkWriteDescriptorSet write{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = lambertian_cubemap_descriptors,
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &image_info,
+		};
+		vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
 	}
 
 	{	// A2-normal: allocate and write normal map descriptor sets
@@ -1646,30 +1640,24 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				);
 			}
 
-			{	// A2-env: bind cubemap descriptor set
-				if (environment_cubemap_view != VK_NULL_HANDLE)
-				{
-					vkCmdBindDescriptorSets(
-						workspace.command_buffer,
-						VK_PIPELINE_BIND_POINT_GRAPHICS,
-						objects_pipeline.layout,
-						3, 1, &environment_cubemap_descriptors,
-						0, nullptr
-					);
-				}
+			{	// A2-env: bind cubemap descriptor set (always; fallback black if no env)
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					objects_pipeline.layout,
+					3, 1, &environment_cubemap_descriptors,
+					0, nullptr
+				);
 			}
 
-			{	// A2-diffuse: bind lambertian cubemap descriptor set
-				if (lambertian_cubemap_view != VK_NULL_HANDLE)
-				{
-					vkCmdBindDescriptorSets(
-						workspace.command_buffer,
-						VK_PIPELINE_BIND_POINT_GRAPHICS,
-						objects_pipeline.layout,
-						4, 1, &lambertian_cubemap_descriptors,
-						0, nullptr
-					);
-				}
+			{	// A2-diffuse: bind lambertian cubemap descriptor set (always; fallback black if no env)
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					objects_pipeline.layout,
+					4, 1, &lambertian_cubemap_descriptors,
+					0, nullptr
+				);
 			}
 		
 			// draw all instances:

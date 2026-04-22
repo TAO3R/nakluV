@@ -183,10 +183,33 @@ void Helpers::transfer_to_cube_image(void const *data, size_t size, Helpers::All
 	destroy_buffer(std::move(transfer_src));
 }
 
+static void create_fallback_env_cubemap(Helpers &helpers, VkDevice device,
+	Helpers::AllocatedImage &out_image, VkImageView &out_view, VkSampler &out_sampler)
+{
+	std::vector<float> black(1 * 1 * 6 * 4, 0.0f);
+	out_image = helpers.create_cube_image(
+		VkExtent2D{1, 1}, VK_FORMAT_R32G32B32A32_SFLOAT,
+		VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, Helpers::Unmapped);
+	helpers.transfer_to_cube_image(black.data(), black.size() * sizeof(float), out_image);
+	VkImageViewCreateInfo vci{ .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = out_image.handle, .viewType = VK_IMAGE_VIEW_TYPE_CUBE, .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6 }};
+	VK(vkCreateImageView(device, &vci, nullptr, &out_view));
+	VkSamplerCreateInfo sci{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.magFilter = VK_FILTER_LINEAR, .minFilter = VK_FILTER_LINEAR,
+		.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+		.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+		.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+		.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE};
+	VK(vkCreateSampler(device, &sci, nullptr, &out_sampler));
+}
+
 void Tutorial::load_environment_cubemap()
 {
 	if (scene_S72.environments.empty()) {
-		std::cout << "[Materials.cpp]: No environment found in scene." << std::endl;
+		std::cout << "[Materials.cpp]: No environment found in scene, creating fallback black cubemap." << std::endl;
+		create_fallback_env_cubemap(rtg.helpers, rtg.device, environment_cubemap, environment_cubemap_view, environment_cubemap_sampler);
 		return;
 	}
 
@@ -310,7 +333,10 @@ void Tutorial::load_environment_cubemap()
 
 void Tutorial::load_lambertian_cubemap()
 {
-	if (scene_S72.environments.empty()) return;
+	if (scene_S72.environments.empty()) {
+		create_fallback_env_cubemap(rtg.helpers, rtg.device, lambertian_cubemap, lambertian_cubemap_view, lambertian_cubemap_sampler);
+		return;
+	}
 
 	for (auto &[name, env] : scene_S72.environments)
 	{
