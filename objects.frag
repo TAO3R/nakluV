@@ -174,7 +174,7 @@ vec3 evalSpecularDirectLightsPBR(
     for (uint i = 0u; i < g_lights.light_count; i++) {
         GPULight Lg = g_lights.lights[i];
         vec3 L;
-        float atten = 1.0;
+        vec3 atten; // scalar falloff * Lg.tint (RGB)
         float areaNorm = 1.0;
 
         if (Lg.type == 0u) {
@@ -278,7 +278,7 @@ void main() {
         radiance = texture(CUBEMAP, refl).rgb;
     }
     else if (material_type == 3u) {
-        // PBR (split-sum approximation)
+        // PBR: environment IBL (split-sum approximation) + per-light direct (diffuse + GGX spec)
         float roughness = texture(ROUGHNESS_MAP, texCoord).r;
         float metalness = texture(METALNESS_MAP, texCoord).r;
         vec3 albedo = texture(TEXTURE, texCoord).rgb;
@@ -288,44 +288,46 @@ void main() {
         float NdotV = max(dot(n, V), 0.0);
         vec3 R = reflect(-V, n);
 
-        // Specular (split-sum) + direct lights (GGX, rep. point)
+        // Specular: split-sum IBL + direct GGX (separate, then sum)
         vec3 prefilteredColor = textureLod(GGX_CUBEMAP, R, roughness * ggx_max_lod).rgb;
         vec2 envBRDF = texture(BRDF_LUT, vec2(NdotV, roughness)).rg;
-        vec3 specularEnv = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+        vec3 specularIbl = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
         vec3 specularDirect = evalSpecularDirectLightsPBR(
             n, V, roughness, F0, NdotV, position);
-        vec3 specular = specularEnv + specularDirect;
+        vec3 specular = specularIbl + specularDirect;
 
-        // Diffuse
+        // Diffuse: Lambert term uses (irradiance from env) + (irradiance from scene lights)
         vec3 F = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
         vec3 kD = (1.0 - F) * (1.0 - metalness);
 
-        vec3 irradiance;
+        vec3 irradianceIbl;
         if (has_lambertian == 1u) {
-            irradiance = texture(LAMBERTIAN_CUBEMAP, n).rgb;
+            irradianceIbl = texture(LAMBERTIAN_CUBEMAP, n).rgb;
         } else {
-            irradiance = SKY_ENERGY * (0.5 * dot(n, SKY_DIRECTION) + 0.5)
-                       + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
+            irradianceIbl = SKY_ENERGY * (0.5 * dot(n, SKY_DIRECTION) + 0.5)
+                + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
         }
-        irradiance += evalDiffuseDirectLights(n, position);
+        vec3 irradianceDirect = evalDiffuseDirectLights(n, position);
+        vec3 irradiance = irradianceIbl + irradianceDirect;
         vec3 diffuse = kD * albedo * irradiance;
 
         radiance = diffuse + specular;
     }
     else {
-        // Lambertian (0)
+        // Lambertian: diffuse = albedo * (env irradiance + direct irradiance)
         vec3 albedo = texture(TEXTURE, texCoord).rgb;
 
-        vec3 e;
+        vec3 irradianceIbl;
         if (has_lambertian == 1u) {
-            e = texture(LAMBERTIAN_CUBEMAP, n).rgb;
+            irradianceIbl = texture(LAMBERTIAN_CUBEMAP, n).rgb;
         } else {
-            e = SKY_ENERGY * (0.5 * dot(n, SKY_DIRECTION) + 0.5)
+            irradianceIbl = SKY_ENERGY * (0.5 * dot(n, SKY_DIRECTION) + 0.5)
                 + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
         }
-        e += evalDiffuseDirectLights(n, position);
+        vec3 irradianceDirect = evalDiffuseDirectLights(n, position);
+        vec3 irradiance = irradianceIbl + irradianceDirect;
 
-        radiance = e * albedo;
+        radiance = irradiance * albedo;
     }
 
     outColor = vec4(apply_tone_map(radiance, exposure_scale, tone_map_mode), 1.0);
