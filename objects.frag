@@ -115,6 +115,133 @@ vec3 evalDiffuseDirectLights(vec3 n, vec3 worldPos) {
     return sum;
 }
 
+// GGX: α = rough*rough (perceptual, Karis/UE4). D and G1 both use the same a² = (α)² in numerics.
+// D = (α)²/π, f = (N·H)²(α²−1) + 1, with α = roughness². So pass a = α, use a2 = a*a inside.
+float D_GTR2(float NdotH, float a) {
+    float a2 = a * a; // a2 = (rough*rough)², matches Walter/UE NDF
+    float nh2 = NdotH * NdotH;
+    float f = nh2 * (a2 - 1.0) + 1.0;
+    return a2 / (A3_PI * f * f);
+}
+
+// Smith G1 (GGX / height-correlated form): must use a², not a, with the same a as D (Frostbite/UE4)
+float G1_SmithGGX(float NdotX, float a) {
+    float a2 = a * a;
+    return 2.0 * NdotX / (NdotX + sqrt(a2 + (1.0 - a2) * (NdotX * NdotX)));
+}
+
+vec3 F_Schlick_F0_VH(vec3 F0, float VdotH) {
+    return F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+}
+
+// Closest point on sphere to ray (origin p, unit dir rDir) — rep point for spec
+vec3 closestPointOnSphereToRayForSpec(vec3 p, vec3 rDir, vec3 c, float rL) {
+    vec3 w = c - p;
+    float t = max(0.0, dot(w, rDir));
+    vec3 pLine = p + rDir * t;
+    vec3 v = pLine - c;
+    float vl = length(v);
+    if (vl < 1e-3) { return c - rL * rDir; }
+    return c + (rL / vl) * v;
+}
+
+// Sun disc: direction in sky closest to R within angular *diameter* angDiameter
+vec3 sunDirClosestToR(vec3 R, vec3 D, float angDiameter) {
+    D = normalize(D);
+    R = normalize(R);
+    float halfA = 0.5 * angDiameter;
+    if (angDiameter < 1e-5) { return D; }
+    float c2 = dot(R, D);
+    float o = acos(clamp(c2, -1.0, 1.0));
+    if (o <= halfA) { return R; }
+    if (o < 1e-3) { return D; }
+    float k = min(1.0, halfA / o);
+    float so = sin(o);
+    return (sin((1.0 - k) * o) * D + sin(k * o) * R) / so;
+}
+
+// PBR: direct (GGX) specular from all lights, representative point + area normalization
+vec3 evalSpecularDirectLightsPBR(
+    vec3 n, vec3 V, float rough,
+    vec3 F0, float NdotV, vec3 worldPos
+) {
+    float NdotVCl = max(NdotV, 1e-4);
+    float a = max(0.01, rough);
+    a = a * a; // GGX α = roughness²
+    vec3 Rrefl = reflect(-V, n);
+
+    vec3 acc = vec3(0.0);
+    for (uint i = 0u; i < g_lights.light_count; i++) {
+        GPULight Lg = g_lights.lights[i];
+        vec3 L;
+        float atten = 1.0;
+        float areaNorm = 1.0;
+
+        if (Lg.type == 0u) {
+            vec3 D = normalize(Lg.direction);
+            L = sunDirClosestToR(Rrefl, D, Lg.angle);
+            L = normalize(L);
+            // Solid angle of sun disc: cone half angle = (angular radius)
+            float halfA = 0.5 * Lg.angle;
+            if (Lg.angle > 1e-5) {
+                areaNorm = 2.0 * A3_PI * (1.0 - cos(halfA));
+            } else {
+                areaNorm = 1.0;
+            }
+            atten = Lg.tint * Lg.power;
+        } else {
+            // Sphere / spot: rep point on emissive sphere
+            vec3 rep = closestPointOnSphereToRayForSpec(worldPos, Rrefl, Lg.position, Lg.radius);
+            vec3 w = rep - worldPos;
+            float dS = max(length(w), 1e-4);
+            L = w / dS;
+            // Same attenuation and factors as diffuse
+            vec3 toC = Lg.position - worldPos;
+            float d2 = max(dot(toC, toC), 1e-8);
+            float d = sqrt(d2);
+            atten = Lg.tint * (Lg.power / (4.0 * A3_PI * d2));
+
+            if (!isinf(Lg.limit) && Lg.limit > 0.0) {
+                atten *= max(0.0, 1.0 - pow(d / Lg.limit, 4.0));
+            }
+            if (Lg.type == 2u) {
+                vec3 wOut = -toC;
+                vec3 axis = normalize(Lg.direction);
+                if (Lg.fov > 1e-5) {
+                    float cosDir = dot(normalize(wOut), axis);
+                    float halfOuter = 0.5 * Lg.fov;
+                    float halfInner = halfOuter * (1.0 - Lg.blend);
+                    float cOuter = cos(halfOuter);
+                    float cInner = cos(halfInner);
+                    float sp;
+                    if (abs(cInner - cOuter) < 1e-4) { sp = float(cosDir >= cOuter); }
+                    else { sp = smoothstep(cOuter, cInner, cosDir); }
+                    atten *= sp;
+                }
+            }
+            // Solid angle of sphere: approx 2π(1 - cos(β)), cos β = d/√(d2+r2)
+            float r = Lg.radius;
+            float cosB = d / max(1e-4, sqrt(d2 + r * r));
+            areaNorm = 2.0 * A3_PI * (1.0 - cosB);
+        }
+
+        areaNorm = max(1.0, areaNorm);
+
+        float NdotL = max(0.0, dot(n, L));
+        if (NdotL < 1e-5) { continue; }
+        vec3 H = normalize(L + V);
+        float NdotH = max(0.0, dot(n, H));
+        float VdotH = max(0.0, dot(V, H));
+
+        float D = D_GTR2(NdotH, a);
+        float G = G1_SmithGGX(NdotL, a) * G1_SmithGGX(NdotV, a);
+        vec3 Fv = F_Schlick_F0_VH(F0, VdotH);
+        // Cook-Torrance with delta light: L_o = D G F * L_in / (4 N·V); areaNorm widens highlight
+        acc += (D * G * Fv) * atten / (4.0 * NdotVCl * areaNorm);
+    }
+    return acc;
+}
+
 layout(push_constant) uniform PushConstants {
     uint material_type;
     float eye_x, eye_y, eye_z;
@@ -161,10 +288,13 @@ void main() {
         float NdotV = max(dot(n, V), 0.0);
         vec3 R = reflect(-V, n);
 
-        // Specular (split-sum)
+        // Specular (split-sum) + direct lights (GGX, rep. point)
         vec3 prefilteredColor = textureLod(GGX_CUBEMAP, R, roughness * ggx_max_lod).rgb;
         vec2 envBRDF = texture(BRDF_LUT, vec2(NdotV, roughness)).rg;
-        vec3 specular = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+        vec3 specularEnv = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+        vec3 specularDirect = evalSpecularDirectLightsPBR(
+            n, V, roughness, F0, NdotV, position);
+        vec3 specular = specularEnv + specularDirect;
 
         // Diffuse
         vec3 F = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
