@@ -65,6 +65,14 @@ layout(std430, set = 8, binding = 0) buffer Lights {
 
 const float A3_PI = 3.14159265358979323846;
 
+// Epic limit falloff: 1 for infinite/missing/invalid limit; else max(0, 1 - (d/limit)^4)
+float lightLimitFalloff(float d, float limit) {
+    if (isinf(limit) || isnan(limit) || limit <= 0.0) {
+        return 1.0;
+    }
+    return max(0.0, 1.0 - pow(d / limit, 4.0));
+}
+
 // Diffuse (Lambert) direct light from scene lights: contribution before albedo/BRDF (irradiance-like)
 vec3 evalDiffuseDirectLights(vec3 n, vec3 worldPos) {
     vec3 sum = vec3(0.0);
@@ -84,10 +92,7 @@ vec3 evalDiffuseDirectLights(vec3 n, vec3 worldPos) {
             float NdotL = max(0.0, dot(n, L));
             float atten = Lg.power / (4.0 * A3_PI * d2);
 
-            float limitFalloff = 1.0;
-            if (!isinf(Lg.limit) && Lg.limit > 0.0) {
-                limitFalloff = max(0.0, 1.0 - pow(d / Lg.limit, 4.0));
-            }
+            float limitFalloff = lightLimitFalloff(d, Lg.limit);
 
             float spotFactor = 1.0;
             if (Lg.type == 2u) {
@@ -201,9 +206,7 @@ vec3 evalSpecularDirectLightsPBR(
             float d = sqrt(d2);
             atten = Lg.tint * (Lg.power / (4.0 * A3_PI * d2));
 
-            if (!isinf(Lg.limit) && Lg.limit > 0.0) {
-                atten *= max(0.0, 1.0 - pow(d / Lg.limit, 4.0));
-            }
+            atten *= lightLimitFalloff(d, Lg.limit);
             if (Lg.type == 2u) {
                 vec3 wOut = -toC;
                 vec3 axis = normalize(Lg.direction);

@@ -118,23 +118,24 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	objects_pipeline.create(rtg, render_pass, 0);
 
 	{	// create descriptor pool:
+		// A3-lights: +1 STORAGE_BUFFER and +1 maxSet per workspace vs pre–A3 (Transforms SSBO + Lights SSBO = 2 storage descriptors).
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size());	// for easier-to-read counting
 
 		std::array<VkDescriptorPoolSize, 2> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = 2 * per_workspace,	// one descriptor per set, two set per workspace
+				.descriptorCount = 2 * per_workspace,	// set0_Camera, set0_World
 			},
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				.descriptorCount = 2 * per_workspace,	// Transforms + Lights, one each per workspace
+				.descriptorCount = 2 * per_workspace,	// set1 Transforms + set8 Lights (one descriptor each)
 			},
 		};
 		
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,	// because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors alocated from this pool
-			.maxSets = 4 * per_workspace,	// Camera, World, Transforms, Lights
+			.maxSets = 4 * per_workspace,	// Camera(0) + World(0) + Transforms(1) + Lights(8) — four sets per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};

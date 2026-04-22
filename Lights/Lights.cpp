@@ -86,7 +86,9 @@ void Tutorial::upload_lights(Workspace &workspace) {
 		gpu_lights.push_back(gl);
 	}
 
+	// At least the header (count=0 when no lights); never zero — SSBO + descriptor stay valid.
 	size_t needed_bytes = sizeof(GPULightHeader) + gpu_lights.size() * sizeof(GPULight);
+	assert(needed_bytes >= sizeof(GPULightHeader));
 
 	if (workspace.Lights_src.handle == VK_NULL_HANDLE || workspace.Lights_src.size < needed_bytes) {
 		size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
@@ -143,11 +145,13 @@ void Tutorial::upload_lights(Workspace &workspace) {
 	if (!gpu_lights.empty()) {
 		std::memcpy(dst + sizeof(header), gpu_lights.data(), gpu_lights.size() * sizeof(GPULight));
 	}
+	// shader: for (i < light_count) — when count==0, loop body never runs
 
 	VkBufferCopy copy_region{
 		.srcOffset = 0,
 		.dstOffset = 0,
 		.size = needed_bytes,
 	};
+	assert(copy_region.size > 0);
 	vkCmdCopyBuffer(workspace.command_buffer, workspace.Lights_src.handle, workspace.Lights.handle, 1, &copy_region);
 }
