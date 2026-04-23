@@ -643,6 +643,9 @@ struct Tutorial : RTG::Application {
 	/** One-time debug log of all collected light instances */
 	void log_lights();
 
+
+	// MATERIALS
+
 	/** GPU-side light struct, std430-aligned (6 x vec4 = 96 bytes per light).
 	 *  Mirrors the GLSL GPULight struct in the fragment shader SSBO. */
 	struct GPULight {
@@ -684,4 +687,34 @@ struct Tutorial : RTG::Application {
 	 * Call after update() (traverse_node) has filled light_instances; invoked from render().
 	 */
 	void upload_lights(Workspace &workspace);
+
+
+	// SHADOWS
+
+	/** Depth-only render pass used for all shadow map generation */
+	VkRenderPass shadow_render_pass = VK_NULL_HANDLE;
+
+	/** Per-spot-light shadow map resources */
+	struct ShadowMap {
+		Helpers::AllocatedImage depth_image;
+		VkImageView depth_view = VK_NULL_HANDLE;
+		VkFramebuffer framebuffer = VK_NULL_HANDLE;
+		uint32_t resolution = 0;
+		mat4 LIGHT_CLIP_FROM_WORLD;
+	};
+
+	/** Stores the shadow map resources for each spot light */
+	std::vector<ShadowMap> shadow_maps;
+
+	/** Comparison sampler shared by all shadow maps (for hardware PCF) */
+	VkSampler shadow_sampler = VK_NULL_HANDLE;
+
+	/**
+	 * Called in the constructor after lights are known.
+	 * Creates shadow_render_pass, shadow_sampler, and per-light shadow map resources.
+	 */
+	void create_shadow_resources();
+
+	/** Destroys all shadow map images/views/framebuffers (but not the render pass or sampler) */
+	void destroy_shadow_maps();
 };

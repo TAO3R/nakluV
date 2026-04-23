@@ -798,6 +798,10 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		load_brdf_lut();
 	}
 
+	{	// A3-shadow: create shadow render pass, sampler, and per-spot-light shadow maps
+		create_shadow_resources();
+	}
+
 	{ // create the texture descriptor pool
 		uint32_t per_texture = uint32_t(textures.size());
 		uint32_t per_normal_map = uint32_t(normal_map_textures.size());
@@ -1041,6 +1045,17 @@ Tutorial::~Tutorial() {
 	//(not using VK macro to avoid throw-ing in destructor)
 	if (VkResult result = vkDeviceWaitIdle(rtg.device); result != VK_SUCCESS) {
 		std::cerr << "Failed to vkDeviceWaitIdle in Tutorial::~Tutorial [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
+	}
+
+	// A3-shadow: cleanup
+	destroy_shadow_maps();
+	if (shadow_sampler != VK_NULL_HANDLE) {
+		vkDestroySampler(rtg.device, shadow_sampler, nullptr);
+		shadow_sampler = VK_NULL_HANDLE;
+	}
+	if (shadow_render_pass != VK_NULL_HANDLE) {
+		vkDestroyRenderPass(rtg.device, shadow_render_pass, nullptr);
+		shadow_render_pass = VK_NULL_HANDLE;
 	}
 
 	// clean up for texture
