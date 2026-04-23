@@ -16,7 +16,7 @@ void Tutorial::log_lights() {
 	if (logged || light_instances.empty()) return;
 	logged = true;
 
-	std::cout << "[A3-load]: Collected " << light_instances.size() << " light instance(s):" << std::endl;
+	std::cout << "[Lights.cpp]: Collected " << light_instances.size() << " light instance(s):" << std::endl;
 	for (size_t i = 0; i < light_instances.size(); ++i) {
 		auto &li = light_instances[i];
 		const char *type = "unknown";
@@ -290,14 +290,14 @@ void Tutorial::create_shadow_resources() {
 
 		shadow_maps.push_back(std::move(sm));
 
-		std::cout << "[A3-shadow]: Created shadow map for spot light \""
+		std::cout << "[Lights.cpp]: Created shadow map for spot light \""
 			<< name << "\" (" << res << "x" << res << ")" << std::endl;
 	}
 
-	std::cout << "[A3-shadow]: " << shadow_maps.size() << " shadow map(s) created." << std::endl;
+	std::cout << "[Lights.cpp]: " << shadow_maps.size() << " shadow map(s) created." << std::endl;
 
 	if (shadow_maps.size() > ObjectsPipeline::A3_MAX_SHADOW_MAPS) {
-		std::cerr << "[A3-shadow]: More than A3_MAX_SHADOW_MAPS (" << ObjectsPipeline::A3_MAX_SHADOW_MAPS
+		std::cerr << "[Lights.cpp]: More than A3_MAX_SHADOW_MAPS (" << ObjectsPipeline::A3_MAX_SHADOW_MAPS
 			<< ") spot shadow lights; extra maps are ignored in objects.frag." << std::endl;
 	}
 }
