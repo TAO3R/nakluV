@@ -65,159 +65,183 @@ layout(std430, set = 8, binding = 0) readonly buffer Lights {
 
 const float A3_PI = 3.14159265358979323846;
 
-// Epic limit falloff: 1 for infinite/missing/invalid limit; else max(0, 1 - (d/limit)^4)
+// ──────────────────────────────────────────────
+// A3 shared light helpers
+// ──────────────────────────────────────────────
+
 float lightLimitFalloff(float d, float limit) {
-    if (isinf(limit) || isnan(limit) || limit <= 0.0) {
-        return 1.0;
-    }
+    if (isinf(limit) || isnan(limit) || limit <= 0.0) return 1.0;
     return max(0.0, 1.0 - pow(d / limit, 4.0));
 }
 
-// Spot cone attenuation (shared by diffuse and specular)
+// s72 spot cone: linear in angle between inner and outer half-angles
 float evalSpotCone(GPULight Lg, vec3 toCenter) {
     if (Lg.type != 2u || Lg.fov < 1e-5) return 1.0;
-    vec3 fromLight = -toCenter; // from light toward surface
+    vec3 fromLight = normalize(-toCenter);
     vec3 axis = normalize(Lg.direction); // light forward (-Z)
-    float cosDir = dot(normalize(fromLight), axis);
-    float halfOuter = 0.5 * Lg.fov;
-    float halfInner = halfOuter * (1.0 - Lg.blend);
-    float cOuter = cos(halfOuter);
-    float cInner = cos(halfInner);
-    if (abs(cInner - cOuter) < 1e-4) return float(cosDir >= cOuter);
-    return smoothstep(cOuter, cInner, cosDir);
+    float cosDir = dot(fromLight, axis);
+    float theta = acos(clamp(cosDir, -1.0, 1.0));
+    float thetaOuter = 0.5 * Lg.fov;
+    float thetaInner = 0.5 * Lg.fov * (1.0 - Lg.blend);
+    if (theta > thetaOuter) return 0.0;
+    if (theta <= thetaInner) return 1.0;
+    if (abs(thetaOuter - thetaInner) < 1e-5) return 1.0;
+    return (thetaOuter - theta) / (thetaOuter - thetaInner);
 }
 
-// Diffuse (Lambert) direct light from scene lights
+// Horizon N·L approximation for area lights (smooth transition using light angular half-size)
+float horizon_ndotl(float mu, float s) {
+    if (s < 1e-8) return max(mu, 0.0);
+    if (mu > s) return mu;
+    if (mu < -s) return 0.0;
+    return 0.5 * (mu + s);
+}
+
+// sin(half-angle) of the light's angular extent from the shading point
+float light_sin_half_angle(GPULight Lg, float dist) {
+    if (Lg.type == 0u) return sin(0.5 * Lg.angle);
+    return clamp(Lg.radius / max(dist, 1e-6), 0.0, 1.0);
+}
+
+// Full angular diameter (radians) of the light from the shading point — for specular rep L
+float spec_light_angle_rad(GPULight Lg, float dist) {
+    if (Lg.type == 0u) return max(Lg.angle, 0.0);
+    return 2.0 * asin(clamp(Lg.radius / max(dist, 1e-6), 0.0, 1.0));
+}
+
+// Representative specular L: closest direction on the light disc to the reflection vector.
+// Dir = direction toward light center; Angle = angular diameter in radians.
+vec3 representative_spec_L(vec3 V, vec3 N, vec3 Dir, float Angle) {
+    vec3 r = reflect(-V, N);
+    if (Angle < 1e-6) return Dir;
+    float half_a = 0.5 * Angle;
+    float cos_h = cos(half_a);
+    float sin_h = sin(half_a);
+    if (dot(r, Dir) > cos_h) return r; // reflection already falls inside the disc
+    vec3 to = r - dot(Dir, r) * Dir;
+    float to_len = length(to);
+    if (to_len < 1e-6) {
+        vec3 ortho = cross(Dir, vec3(0.0, 1.0, 0.0));
+        if (dot(ortho, ortho) < 1e-8)
+            ortho = cross(Dir, vec3(1.0, 0.0, 0.0));
+        to = normalize(ortho);
+    } else {
+        to /= to_len;
+    }
+    return cos_h * Dir + sin_h * to;
+}
+
+// (α / α')² normalization for area-light specular energy conservation
+float sphere_light_spec_normalization(float roughness, float lightAngle) {
+    float alpha = roughness * roughness;
+    float alpha_prime = alpha + 0.5 * sin(lightAngle * 0.5);
+    alpha_prime = max(alpha_prime, 1e-5);
+    float n = alpha / alpha_prime;
+    return n * n;
+}
+
+// Common incident-light radiance and direction for a single light.
+// Returns false if the light contributes nothing to this point.
+bool incident_light(vec3 worldPos, GPULight Lg, out vec3 L, out vec3 rad) {
+    if (Lg.type == 0u) {
+        vec3 d = Lg.direction;
+        if (dot(d, d) < 1e-10) return false;
+        L = -normalize(d); // photon travel dir → toward-light
+        rad = Lg.tint * Lg.power;
+        return true;
+    }
+    vec3 toL = Lg.position - worldPos;
+    float dist_sq = dot(toL, toL);
+    if (dist_sq < 1e-8) return false;
+    float dist = sqrt(dist_sq);
+    L = toL / dist;
+    float d_eff = max(dist, Lg.radius);
+    float atten = Lg.power / (4.0 * A3_PI * d_eff * d_eff);
+    float lim_atten = lightLimitFalloff(dist, Lg.limit);
+    if (lim_atten <= 0.0) return false;
+    float spot = evalSpotCone(Lg, toL);
+    if (spot <= 0.0) return false;
+    rad = Lg.tint * atten * lim_atten * spot;
+    return true;
+}
+
+// ──────────────────────────────────────────────
+// BRDF building blocks
+// ──────────────────────────────────────────────
+
+float D_GGX(float NdotH, float roughness) {
+    float a  = roughness * roughness;
+    float a2 = a * a;
+    float nh2 = NdotH * NdotH;
+    float denom = nh2 * (a2 - 1.0) + 1.0;
+    return a2 / (A3_PI * denom * denom);
+}
+
+float G_SchlickGGX(float NdotX, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return NdotX / (NdotX * (1.0 - k) + k);
+}
+
+float G_Smith(float NdotV, float NdotL, float roughness) {
+    return G_SchlickGGX(NdotV, roughness) * G_SchlickGGX(NdotL, roughness);
+}
+
+vec3 F_Schlick(vec3 F0, float cosTheta) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// ──────────────────────────────────────────────
+// Per-light loop: diffuse + specular (PBR path)
+// ──────────────────────────────────────────────
+
 vec3 evalDiffuseDirectLights(vec3 n, vec3 worldPos) {
     vec3 sum = vec3(0.0);
     for (uint i = 0u; i < g_lights.light_count; i++) {
         GPULight Lg = g_lights.lights[i];
-        if (Lg.type == 0u) {
-            // Sun: Lg.direction = photon travel dir; L = opposite (toward light)
-            vec3 L = -normalize(Lg.direction);
-            float NdotL = max(0.0, dot(n, L));
-            sum += Lg.tint * Lg.power * NdotL;
-        } else {
-            vec3 toLight = Lg.position - worldPos;
-            float d2 = max(dot(toLight, toLight), 1e-8);
-            float d = sqrt(d2);
-            vec3 L = toLight / d;
-            float NdotL = max(0.0, dot(n, L));
-            float atten = Lg.power / (4.0 * A3_PI * d2);
-            float limitFalloff = lightLimitFalloff(d, Lg.limit);
-            float spotFactor = evalSpotCone(Lg, toLight);
-
-            sum += Lg.tint * atten * NdotL * limitFalloff * spotFactor;
-        }
+        vec3 L; vec3 rad;
+        if (!incident_light(worldPos, Lg, L, rad)) continue;
+        float dist = (Lg.type == 0u) ? 0.0 : length(Lg.position - worldPos);
+        float s = light_sin_half_angle(Lg, dist);
+        float mu = dot(n, L);
+        sum += rad * horizon_ndotl(mu, s);
     }
     return sum;
 }
 
-// GGX: α = rough*rough (perceptual, Karis/UE4). D and G1 both use the same a² = (α)² in numerics.
-// D = (α)²/π, f = (N·H)²(α²−1) + 1, with α = roughness². So pass a = α, use a2 = a*a inside.
-float D_GTR2(float NdotH, float a) {
-    float a2 = a * a; // a2 = (rough*rough)², matches Walter/UE NDF
-    float nh2 = NdotH * NdotH;
-    float f = nh2 * (a2 - 1.0) + 1.0;
-    return a2 / (A3_PI * f * f);
-}
-
-// Smith G1 (GGX / height-correlated form): must use a², not a, with the same a as D (Frostbite/UE4)
-float G1_SmithGGX(float NdotX, float a) {
-    float a2 = a * a;
-    return 2.0 * NdotX / (NdotX + sqrt(a2 + (1.0 - a2) * (NdotX * NdotX)));
-}
-
-vec3 F_Schlick_F0_VH(vec3 F0, float VdotH) {
-    return F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
-}
-
-// Representative point on sphere for specular: closest point on sphere surface to the reflection ray.
-// When the ray passes through the sphere (vl < rL), fall back to center direction.
-vec3 repPointSphere(vec3 p, vec3 R, vec3 c, float rL) {
-    vec3 w = c - p;
-    float t = max(0.0, dot(w, R));
-    vec3 pLine = p + R * t;
-    vec3 v = pLine - c;
-    float vl = length(v);
-    if (vl < rL) {
-        return c; // ray intersects sphere — use center
-    }
-    return c + (rL / vl) * v;
-}
-
-// Sun disc: direction on disc closest to R; D = direction toward sun (from surface)
-vec3 sunDirClosestToR(vec3 R, vec3 D, float angDiameter) {
-    D = normalize(D);
-    R = normalize(R);
-    float halfA = 0.5 * angDiameter;
-    if (angDiameter < 1e-5) { return D; }
-    float c2 = dot(R, D);
-    float o = acos(clamp(c2, -1.0, 1.0));
-    if (o <= halfA) { return R; }
-    if (o < 1e-3) { return D; }
-    float k = min(1.0, halfA / o);
-    float so = sin(o);
-    return (sin((1.0 - k) * o) * D + sin(k * o) * R) / so;
-}
-
-// PBR: direct (GGX) specular from all lights, representative point + roughness-widening normalization
 vec3 evalSpecularDirectLightsPBR(
-    vec3 n, vec3 V, float rough,
+    vec3 n, vec3 V, float roughness,
     vec3 F0, float NdotV, vec3 worldPos
 ) {
     float NdotVCl = max(NdotV, 1e-4);
-    float alpha = max(0.01, rough) * max(0.01, rough); // α = rough²
-    vec3 Rrefl = reflect(-V, n);
-
     vec3 acc = vec3(0.0);
+
     for (uint i = 0u; i < g_lights.light_count; i++) {
         GPULight Lg = g_lights.lights[i];
-        vec3 L;
-        vec3 atten;
-        float norm = 1.0;
+        vec3 L; vec3 rad;
+        if (!incident_light(worldPos, Lg, L, rad)) continue;
 
-        if (Lg.type == 0u) {
-            // Sun: Lg.direction = photon travel dir; toward-sun = -direction
-            vec3 sunDir = -normalize(Lg.direction);
-            L = sunDirClosestToR(Rrefl, sunDir, Lg.angle);
-            L = normalize(L);
-            // Epic-style normalization for sun disc (treat angular radius as source size)
-            float sinHalf = sin(0.5 * Lg.angle);
-            float aPrime = clamp(alpha + sinHalf * sinHalf, 0.0, 1.0);
-            norm = (alpha * alpha) / (aPrime * aPrime);
-            atten = Lg.tint * Lg.power;
-        } else {
-            // Sphere / spot: representative point on emissive sphere
-            vec3 toC = Lg.position - worldPos;
-            float d2 = max(dot(toC, toC), 1e-8);
-            float d = sqrt(d2);
+        float dist = (Lg.type == 0u) ? 0.0 : length(Lg.position - worldPos);
+        float lightAngle = spec_light_angle_rad(Lg, dist);
+        vec3 L_spec = representative_spec_L(V, n, L, lightAngle);
+        float NdotL_spec = max(dot(n, L_spec), 0.0);
+        if (NdotL_spec < 1e-5) continue;
 
-            vec3 rep = repPointSphere(worldPos, Rrefl, Lg.position, Lg.radius);
-            vec3 w = rep - worldPos;
-            float dS = max(length(w), 1e-4);
-            L = w / dS;
+        vec3 H_sum = V + L_spec;
+        float h_len = length(H_sum);
+        vec3 H = (h_len > 1e-6) ? (H_sum / h_len) : n;
+        float NdotH = max(dot(n, H), 0.0);
+        float VdotH = max(dot(V, H), 0.0);
 
-            atten = Lg.tint * (Lg.power / (4.0 * A3_PI * d2));
-            atten *= lightLimitFalloff(d, Lg.limit);
-            atten *= evalSpotCone(Lg, toC);
+        vec3 Fv = F_Schlick(F0, VdotH);
+        float Dv = D_GGX(NdotH, roughness);
+        float Gv = G_Smith(NdotVCl, NdotL_spec, roughness);
 
-            // Epic roughness-widening normalization: α' = saturate(α + r/(2d))
-            float aPrime = clamp(alpha + Lg.radius / (2.0 * d), 0.0, 1.0);
-            norm = (alpha * alpha) / (aPrime * aPrime);
-        }
+        float denom = 4.0 * NdotVCl * NdotL_spec + 0.001;
+        vec3 spec = (Dv * Gv * Fv) / denom * rad * NdotL_spec;
+        spec *= sphere_light_spec_normalization(roughness, lightAngle);
 
-        float NdotL = max(0.0, dot(n, L));
-        if (NdotL < 1e-5) { continue; }
-        vec3 H = normalize(L + V);
-        float NdotH = max(0.0, dot(n, H));
-        float VdotH = max(0.0, dot(V, H));
-
-        float Dv = D_GTR2(NdotH, alpha);
-        float G = G1_SmithGGX(NdotL, alpha) * G1_SmithGGX(NdotVCl, alpha);
-        vec3 Fv = F_Schlick_F0_VH(F0, VdotH);
-        // Cook-Torrance: f = DGF/(4·N·L·N·V), then L_o = f * Li * N·L → N·L cancels
-        acc += (Dv * G * Fv) * norm * atten / (4.0 * NdotVCl);
+        acc += spec;
     }
     return acc;
 }
