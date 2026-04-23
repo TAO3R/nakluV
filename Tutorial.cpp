@@ -119,23 +119,28 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 	{	// create descriptor pool:
 		// A3-lights: +1 STORAGE_BUFFER and +1 maxSet per workspace vs pre–A3 (Transforms SSBO + Lights SSBO = 2 storage descriptors).
+		// A3-shadow PCF: +1 UBO, +A3_MAX_SHADOW_MAPS combined image samplers, +1 set per workspace
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size());	// for easier-to-read counting
 
-		std::array<VkDescriptorPoolSize, 2> pool_sizes{
+		std::array<VkDescriptorPoolSize, 3> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = 2 * per_workspace,	// set0_Camera, set0_World
+				.descriptorCount = 3 * per_workspace,	// Camera, World, ShadowMatrices (set9)
 			},
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				.descriptorCount = 3 * per_workspace,	// Transforms + Lights + Shadow_Transforms
+			},
+			VkDescriptorPoolSize{
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = ObjectsPipeline::A3_MAX_SHADOW_MAPS * per_workspace, // set9 SHADOW_MAPS[]
 			},
 		};
 		
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,	// because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors alocated from this pool
-			.maxSets = 5 * per_workspace,	// Camera + World + Transforms + Lights + Shadow_Transforms
+			.maxSets = 6 * per_workspace,	// + Shadow_descriptors (set9)
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -233,16 +238,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Lights_descriptors));
 		}
 
-		{	// A3-shadow: allocate descriptor set for shadow pipeline's transforms view
-			VkDescriptorSetAllocateInfo alloc_info{
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-				.descriptorPool = descriptor_pool,
-				.descriptorSetCount = 1,
-				.pSetLayouts = &shadow_pipeline.set0_Transforms,
-			};
-
-			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Shadow_Transforms_descriptors));
-		}
+		// Shadow_Transforms_descriptors allocated in init_object_shadow_descriptors() after shadow_pipeline.create()
 
 		{	// A3-lights: initial SSBO storage (size matches first upload_lights rounding); count=0 until render uploads
 			constexpr VkDeviceSize lights_buf_bytes = 4096;
@@ -812,6 +808,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	{	// A3-shadow: create shadow render pass, sampler, shadow maps, and shadow pipeline
 		create_shadow_resources();
 		shadow_pipeline.create(rtg, shadow_render_pass, 0);
+		init_object_shadow_descriptors();
 	}
 
 	{ // create the texture descriptor pool
@@ -1061,6 +1058,13 @@ Tutorial::~Tutorial() {
 
 	// A3-shadow: cleanup
 	destroy_shadow_maps();
+	if (dummy_shadow_depth_view != VK_NULL_HANDLE) {
+		vkDestroyImageView(rtg.device, dummy_shadow_depth_view, nullptr);
+		dummy_shadow_depth_view = VK_NULL_HANDLE;
+	}
+	if (dummy_shadow_depth_image.handle != VK_NULL_HANDLE) {
+		rtg.helpers.destroy_image(std::move(dummy_shadow_depth_image));
+	}
 
 	if (shadow_sampler != VK_NULL_HANDLE) {
 		vkDestroySampler(rtg.device, shadow_sampler, nullptr);
@@ -1223,6 +1227,9 @@ Tutorial::~Tutorial() {
 		}
 		if (workspace.Lights.handle != VK_NULL_HANDLE) {
 			rtg.helpers.destroy_buffer(std::move(workspace.Lights));
+		}
+		if (workspace.ShadowMatrices_ubo.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.ShadowMatrices_ubo));
 		}
 	}
 	workspaces.clear();
@@ -1535,6 +1542,10 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		upload_lights(workspace);
 	}
 
+	{	// A3-shadow: spot light clip matrices for PCF in objects.frag
+		upload_shadow_params(workspace);
+	}
+
 	{	// memory barrier to make sure copies complete before rendering happens:
 		VkMemoryBarrier memory_barrier{
 			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -1749,6 +1760,18 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					8,
 					1,
 					&workspace.Lights_descriptors,
+					0, nullptr
+				);
+			}
+
+			{	// A3-shadow: PCF shadow maps + clip matrices (set 9; init_object_shadow_descriptors always allocs)
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					objects_pipeline.layout,
+					9,
+					1,
+					&workspace.Shadow_descriptors,
 					0, nullptr
 				);
 			}

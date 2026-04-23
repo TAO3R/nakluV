@@ -205,8 +205,33 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set8_Lights) );
 	}
 
+	{	// A3-shadow: set9 (sampler2DShadow[] + UBO of clip-from-world per slot)
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings{
+			VkDescriptorSetLayoutBinding{
+				.binding = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = ObjectsPipeline::A3_MAX_SHADOW_MAPS,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
+			VkDescriptorSetLayoutBinding{
+				.binding = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
+		};
+
+		VkDescriptorSetLayoutCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.bindingCount = uint32_t(bindings.size()),
+			.pBindings = bindings.data(),
+		};
+
+		VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set9_Shadows));
+	}
+
 	{	// create pipeline layout
-		std::array<VkDescriptorSetLayout, 9> layouts{
+		std::array<VkDescriptorSetLayout, 10> layouts{
 			set0_World,
             set1_Transforms,
             set2_Texture,
@@ -216,6 +241,7 @@ void Tutorial::ObjectsPipeline::create(RTG& rtg, VkRenderPass render_pass, uint3
 			set6_PBRMaps,				// A2-pbr
 			set7_PBREnv,				// A2-pbr
 			set8_Lights,				// A3-lights
+			set9_Shadows,				// A3-shadow PCF
 		};
 
 		// A2-env: `materaial_type` and camera eye position push constants
@@ -367,6 +393,12 @@ void Tutorial::ObjectsPipeline::destroy(RTG& rtg) {
 	if (set8_Lights != VK_NULL_HANDLE) {
 		vkDestroyDescriptorSetLayout(rtg.device, set8_Lights, nullptr);
 		set8_Lights = VK_NULL_HANDLE;
+	}
+
+	// A3-shadow
+	if (set9_Shadows != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, set9_Shadows, nullptr);
+		set9_Shadows = VK_NULL_HANDLE;
 	}
 
 	// A2-pbr: PBR descriptor set layouts

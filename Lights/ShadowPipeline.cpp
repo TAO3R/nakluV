@@ -97,8 +97,8 @@ void Tutorial::ShadowPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
 			.cullMode = VK_CULL_MODE_BACK_BIT,
 			.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
 			.depthBiasEnable = VK_TRUE,
-			.depthBiasConstantFactor = 1.25f,
-			.depthBiasSlopeFactor = 1.75f,
+			.depthBiasConstantFactor = 2.0f,
+			.depthBiasSlopeFactor = 2.0f,
 			.lineWidth = 1.0f,
 		};
 

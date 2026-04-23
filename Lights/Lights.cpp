@@ -57,6 +57,7 @@ void Tutorial::upload_lights(Workspace &workspace) {
 		gl.tint[2] = li.light->tint.b;
 
 		gl.shadow = static_cast<float>(li.shadow);
+		gl.shadow_map_index = (li.shadow > 0u && li.shadow_map_index >= 0) ? li.shadow_map_index : -1;
 
 		if (auto *sun = std::get_if<S72::Light::Sun>(&li.light->source)) {
 			gl.type   = 0;
@@ -294,6 +295,11 @@ void Tutorial::create_shadow_resources() {
 	}
 
 	std::cout << "[A3-shadow]: " << shadow_maps.size() << " shadow map(s) created." << std::endl;
+
+	if (shadow_maps.size() > ObjectsPipeline::A3_MAX_SHADOW_MAPS) {
+		std::cerr << "[A3-shadow]: More than A3_MAX_SHADOW_MAPS (" << ObjectsPipeline::A3_MAX_SHADOW_MAPS
+			<< ") spot shadow lights; extra maps are ignored in objects.frag." << std::endl;
+	}
 }
 
 void Tutorial::destroy_shadow_maps() {
@@ -353,5 +359,169 @@ void Tutorial::update_shadow_matrices() {
 		mat4 proj = perspective(spot.fov, 1.0f, near_plane, far_plane);
 
 		shadow_maps[sm_idx].LIGHT_CLIP_FROM_WORLD = proj * view;
+	}
+}
+
+void Tutorial::ensure_dummy_shadow_map() {
+	if (dummy_shadow_depth_view != VK_NULL_HANDLE) return;
+
+	dummy_shadow_depth_image = rtg.helpers.create_image(
+		VkExtent2D{.width = 1, .height = 1},
+		depth_format,
+		VK_IMAGE_TILING_OPTIMAL,
+		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+		Helpers::Unmapped
+	);
+
+	{
+		VkImageViewCreateInfo view_ci{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = dummy_shadow_depth_image.handle,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = depth_format,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
+		};
+		VK(vkCreateImageView(rtg.device, &view_ci, nullptr, &dummy_shadow_depth_view));
+	}
+
+	VkFramebuffer fb = VK_NULL_HANDLE;
+	{
+		VkFramebufferCreateInfo fb_ci{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = shadow_render_pass,
+			.attachmentCount = 1,
+			.pAttachments = &dummy_shadow_depth_view,
+			.width = 1,
+			.height = 1,
+			.layers = 1,
+		};
+		VK(vkCreateFramebuffer(rtg.device, &fb_ci, nullptr, &fb));
+	}
+
+	VkClearValue clear{.depthStencil{.depth = 1.0f, .stencil = 0}};
+	VkRenderPassBeginInfo begin_info{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass = shadow_render_pass,
+		.framebuffer = fb,
+		.renderArea{
+			.offset = {.x = 0, .y = 0},
+			.extent = {.width = 1, .height = 1},
+		},
+		.clearValueCount = 1,
+		.pClearValues = &clear,
+	};
+
+	VK(vkResetCommandBuffer(rtg.helpers.transfer_command_buffer, 0));
+	VkCommandBufferBeginInfo bi{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+	VK(vkBeginCommandBuffer(rtg.helpers.transfer_command_buffer, &bi));
+	vkCmdBeginRenderPass(rtg.helpers.transfer_command_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
+	vkCmdEndRenderPass(rtg.helpers.transfer_command_buffer);
+	VK(vkEndCommandBuffer(rtg.helpers.transfer_command_buffer));
+	VkSubmitInfo si{
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &rtg.helpers.transfer_command_buffer,
+	};
+	VK(vkQueueSubmit(rtg.graphics_queue, 1, &si, VK_NULL_HANDLE));
+	VK(vkQueueWaitIdle(rtg.graphics_queue));
+
+	vkDestroyFramebuffer(rtg.device, fb, nullptr);
+}
+
+void Tutorial::init_object_shadow_descriptors() {
+	ensure_dummy_shadow_map();
+
+	for (Workspace &workspace : workspaces) {
+		{	// shadow pipeline's Transforms SSBO descriptor (must be after shadow_pipeline.create())
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &shadow_pipeline.set0_Transforms,
+			};
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Shadow_Transforms_descriptors));
+		}
+
+		workspace.ShadowMatrices_ubo = rtg.helpers.create_buffer(
+			sizeof(ObjectsPipeline::ShadowParams),
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			Helpers::Mapped
+		);
+
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set9_Shadows,
+		};
+		VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Shadow_descriptors));
+
+		std::array<VkDescriptorImageInfo, ObjectsPipeline::A3_MAX_SHADOW_MAPS> img_infos{};
+		for (uint32_t i = 0; i < ObjectsPipeline::A3_MAX_SHADOW_MAPS; ++i) {
+			VkImageView v = dummy_shadow_depth_view;
+			if (i < shadow_maps.size()) {
+				v = shadow_maps[i].depth_view;
+			}
+			img_infos[i] = VkDescriptorImageInfo{
+				.sampler = shadow_sampler,
+				.imageView = v,
+				.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+			};
+		}
+
+		VkDescriptorBufferInfo buf_info{
+			.buffer = workspace.ShadowMatrices_ubo.handle,
+			.offset = 0,
+			.range = sizeof(ObjectsPipeline::ShadowParams),
+		};
+
+		std::array<VkWriteDescriptorSet, 2> writes{
+			VkWriteDescriptorSet{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = workspace.Shadow_descriptors,
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = ObjectsPipeline::A3_MAX_SHADOW_MAPS,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = img_infos.data(),
+			},
+			VkWriteDescriptorSet{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = workspace.Shadow_descriptors,
+				.dstBinding = 1,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.pBufferInfo = &buf_info,
+			},
+		};
+
+		vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
+	}
+}
+
+void Tutorial::upload_shadow_params(Workspace &workspace) {
+	if (workspace.ShadowMatrices_ubo.handle == VK_NULL_HANDLE) return;
+	assert(workspace.ShadowMatrices_ubo.allocation.mapped);
+
+	auto *params = reinterpret_cast<ObjectsPipeline::ShadowParams *>(
+		workspace.ShadowMatrices_ubo.allocation.data());
+	for (uint32_t i = 0; i < ObjectsPipeline::A3_MAX_SHADOW_MAPS; ++i) {
+		if (i < shadow_maps.size()) {
+			params->light_clip_from_world[i] = shadow_maps[i].LIGHT_CLIP_FROM_WORLD;
+		} else {
+			std::memset(params->light_clip_from_world[i].data(), 0, sizeof(mat4));
+		}
 	}
 }

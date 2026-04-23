@@ -38,6 +38,13 @@ layout(set = 6, binding = 1) uniform sampler2D METALNESS_MAP;
 layout(set = 7, binding = 0) uniform samplerCube GGX_CUBEMAP;
 layout(set = 7, binding = 1) uniform sampler2D BRDF_LUT;
 
+// A3-shadow (spot PCF) — must match ObjectsPipeline::A3_MAX_SHADOW_MAPS
+const int A3_MAX_SHADOW_MAPS = 8;
+layout(set = 9, binding = 0) uniform sampler2DShadow SHADOW_MAPS[A3_MAX_SHADOW_MAPS];
+layout(set = 9, binding = 1) uniform ShadowUBO {
+    mat4 light_clip_from_world[A3_MAX_SHADOW_MAPS];
+} g_shadow;
+
 // A3-lights (must match Tutorial::GPULight / GPULightHeader in C++)
 struct GPULight {
     uint   type;      // 0 = sun, 1 = sphere, 2 = spot
@@ -53,8 +60,9 @@ struct GPULight {
     float  fov;
     float  blend;
     float  angle;     // sun only
-    float  shadow;    // resolution hint; unused in lighting for now
-    float  _pe, _pf;
+    float  shadow;    // shadow map res (0 = no shadow)
+    int    shadow_map_index;
+    uint   _pad_e;
 };
 
 layout(std430, set = 8, binding = 0) readonly buffer Lights {
@@ -64,6 +72,31 @@ layout(std430, set = 8, binding = 0) readonly buffer Lights {
 } g_lights;
 
 const float A3_PI = 3.14159265358979323846;
+
+// 3x3 PCF (9 samples) for spot light shadow map
+float shadow_pcf(int map_index, vec3 world_pos, mat4 light_clip_from_world) {
+    if (map_index < 0) return 1.0;
+    vec4 light_clip = light_clip_from_world * vec4(world_pos, 1.0);
+    if (light_clip.w <= 0.0) return 1.0;
+    vec3 ndc = light_clip.xyz / light_clip.w;
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    float depth = ndc.z;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0
+        || depth < 0.0 || depth > 1.0)
+    {
+        return 1.0;
+    }
+    int mi = clamp(map_index, 0, A3_MAX_SHADOW_MAPS - 1);
+    float texel = 1.0 / float(textureSize(SHADOW_MAPS[mi], 0).x);
+    float s = 0.0;
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            vec2 offset = vec2(float(x), float(y)) * texel;
+            s += texture(SHADOW_MAPS[mi], vec3(uv + offset, depth));
+        }
+    }
+    return s / 9.0;
+}
 
 // ──────────────────────────────────────────────
 // A3 shared light helpers
@@ -140,8 +173,6 @@ float sphere_light_spec_normalization(float roughness, float lightAngle) {
     return n * n;
 }
 
-// Common incident-light radiance and direction for a single light.
-// Returns false if the light contributes nothing to this point.
 bool incident_light(vec3 worldPos, GPULight Lg, out vec3 L, out vec3 rad) {
     if (Lg.type == 0u) {
         vec3 d = Lg.direction;
@@ -162,6 +193,14 @@ bool incident_light(vec3 worldPos, GPULight Lg, out vec3 L, out vec3 rad) {
     float spot = evalSpotCone(Lg, toL);
     if (spot <= 0.0) return false;
     rad = Lg.tint * atten * lim_atten * spot;
+    if (Lg.type == 2u) {
+        if (Lg.shadow_map_index >= 0) {
+            int smi = clamp(Lg.shadow_map_index, 0, A3_MAX_SHADOW_MAPS - 1);
+            mat4 clip_m = g_shadow.light_clip_from_world[smi];
+            float sh = shadow_pcf(smi, worldPos, clip_m);
+            rad *= sh;
+        }
+    }
     return true;
 }
 
@@ -191,9 +230,7 @@ vec3 F_Schlick(vec3 F0, float cosTheta) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-// ──────────────────────────────────────────────
 // Per-light loop: diffuse + specular (PBR path)
-// ──────────────────────────────────────────────
 
 vec3 evalDiffuseDirectLights(vec3 n, vec3 worldPos) {
     vec3 sum = vec3(0.0);

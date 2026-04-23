@@ -70,6 +70,11 @@ struct Tutorial : RTG::Application {
 
 		// A3-shadow: shadow pipeline's view of the same Transforms SSBO
 		VkDescriptorSet Shadow_Transforms_descriptors = VK_NULL_HANDLE;
+
+		// A3-shadow: PCF in objects.frag (set 9: shadow maps + clip matrices)
+		VkDescriptorSet Shadow_descriptors = VK_NULL_HANDLE;
+		/** Host-coherent; updated each frame in render() with shadow_maps' LIGHT_CLIP_FROM_WORLD */
+		Helpers::AllocatedBuffer ShadowMatrices_ubo;
 	};
 	std::vector< Workspace > workspaces;
 
@@ -138,6 +143,15 @@ struct Tutorial : RTG::Application {
 
 		// A3-lights
 		VkDescriptorSetLayout set8_Lights = VK_NULL_HANDLE;
+
+		// A3-shadow (objects.frag): spot shadow maps + light clip matrices
+		static constexpr uint32_t A3_MAX_SHADOW_MAPS = 8u;
+		VkDescriptorSetLayout set9_Shadows = VK_NULL_HANDLE;
+		/** std140: one clip-from-world per shadow map slot */
+		struct ShadowParams {
+			mat4 light_clip_from_world[A3_MAX_SHADOW_MAPS];
+		};
+		static_assert(sizeof(ShadowParams) == sizeof(mat4) * A3_MAX_SHADOW_MAPS, "ShadowParams is std140 mat4[]");
 
 		// types for descriptors:
 		struct World {
@@ -673,7 +687,8 @@ struct Tutorial : RTG::Application {
 
 		float    angle;         // sun: angular diameter (radians); others: 0
 		float    shadow;        // shadow map resolution (0 = no shadow)
-		float    _pad3[2];
+		int32_t  shadow_map_index; // spot + shadow: index into SHADOW_MAPS; else -1
+		uint32_t _pad3;
 	};
 	static_assert(sizeof(GPULight) == 96, "GPULight must be 96 bytes (6 x vec4)");
 
@@ -715,11 +730,24 @@ struct Tutorial : RTG::Application {
 	/** Comparison sampler shared by all shadow maps (for hardware PCF) */
 	VkSampler shadow_sampler = VK_NULL_HANDLE;
 
+	/** 1x1 depth for unused SHADOW_MAPS[] slots and when no real maps exist */
+	Helpers::AllocatedImage dummy_shadow_depth_image;
+	VkImageView dummy_shadow_depth_view = VK_NULL_HANDLE;
+
 	/**
 	 * Called in the constructor after lights are known.
 	 * Creates shadow_render_pass, shadow_sampler, and per-light shadow map resources.
 	 */
 	void create_shadow_resources();
+
+	/** Clear a 1x1 depth image via shadow render pass; used for descriptor padding */
+	void ensure_dummy_shadow_map();
+
+	/** After create_shadow_resources: alloc set9 + UBO per workspace and write shadow descriptors */
+	void init_object_shadow_descriptors();
+
+	/** Per frame after update_shadow_matrices: copy clip matrices to workspace ShadowMatrices_ubo */
+	void upload_shadow_params(Workspace &workspace);
 
 	/** Destroys all shadow map images/views/framebuffers (but not the render pass or sampler) */
 	void destroy_shadow_maps();
