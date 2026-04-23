@@ -201,21 +201,76 @@ It prints every collected light's name, type (sun/sphere/spot), world position, 
 
 <h3>Adding Direct Lighting to Materials <span class="atag">A3-materials</span></h3>
 
-<p class="placeholder">
-Cover, at least:
-the structures used to pass light lists to materials.
+<p>
+To get light data onto the GPU, I defined a <code>GPULight</code> struct in <code>Tutorial.hpp</code> (under the A3-Lights section) that matches the GLSL layout exactly &mdash; 96 bytes per light, <code>std430</code>-aligned.
+It has a <code>type</code> (0 = sun, 1 = sphere, 2 = spot), world-space <code>position</code> and <code>direction</code>, <code>tint</code>, <code>power</code> (or strength for sun), <code>radius</code>, <code>limit</code>, <code>fov</code>, <code>blend</code>, <code>angle</code>, and <code>shadow</code>.
+The light array is prefixed by a <code>GPULightHeader</code> (16 bytes: a <code>light_count</code> plus padding) and packed into a storage buffer (SSBO) at descriptor set 8, binding 0.
 </p>
 
-<p class="placeholder">
-Include screenshots or recordings of your viewer showing proper behavior of lambertian and pbr materials under sphere, spot, and sun lights.
+<p>
+Each workspace in <code>Tutorial</code> holds a pair of Vulkan buffers: <code>Lights_src</code> (host-visible staging) and <code>Lights</code> (device-local SSBO), plus a <code>Lights_descriptors</code> set.
+Every frame, after <code>traverse_node</code> has collected all <code>LightInstance</code>s, I call <code>upload_lights(workspace)</code> (defined in <code>Lights/Lights.cpp</code>).
+This function iterates the <code>light_instances</code> vector, converts each one to a <code>GPULight</code> by pulling fields from the <code>S72::Light</code> variant (using <code>std::get_if</code> for Sun, Sphere, and Spot), writes the header and array into the staging buffer, and issues a <code>vkCmdCopyBuffer</code> to the device-local SSBO.
+If the light count grows beyond the current buffer capacity, it reallocates both buffers (rounded up to 4KB blocks) and updates the descriptor set on the fly.
+The descriptor pool accounts for the extra storage buffer descriptor per workspace.
 </p>
 
-<p class="placeholder">
-Include a graph showing the performance impact of adding additional lights to a test scene.
-Document how you made the scene and what kind of lights and camera positioning you used.
-(Disable shadows for this test.)
-We would theoretically expect a linear increase in computing time; is this borne out in practice?
-How many lights can your viewer handle at a reasonable frame rate?
+<p>
+On the shader side, the fragment shader declares a <code>readonly buffer Lights</code> at set 8 with the matching <code>GPULight</code> struct and <code>light_count</code>.
+All the radiance/attenuation logic for a single light &mdash; direction, inverse-square falloff, limit falloff, and spot cone &mdash; is consolidated into a single <code>incident_light()</code> function that both the diffuse and specular paths call.
+This avoids duplicating the attenuation math and makes it easy to early-out if a light contributes nothing (e.g. outside the spot cone or beyond the limit).
+</p>
+
+<h4>Diffuse lighting</h4>
+
+<p>
+For diffuse, both lambertian and PBR materials call <code>evalDiffuseDirectLights(n, worldPos)</code>.
+This loops over all lights and calls <code>incident_light</code> to get the direction <code>L</code> (toward the light) and the attenuated radiance.
+For sun lights, <code>L</code> is simply the negated stored direction (since the stored direction is the photon travel direction, local &minus;Z).
+For sphere and spot lights, <code>L</code> points from the surface to the light center, and the irradiance uses inverse-square falloff with the effective distance clamped to <code>max(dist, radius)</code> &mdash; this prevents the energy from blowing up to infinity when a surface point sits inside or very close to the emitting sphere.
+</p>
+
+<p>
+Instead of a hard <code>max(0, N&middot;L)</code> cutoff, I use a <code>horizon_ndotl</code> function that smoothly transitions the N&middot;L factor based on the light's angular half-size <code>s</code>.
+For a point light (negligible angular size), this reduces to the usual clamp.
+For an area light, <code>s = sin(half-angle)</code> is computed as <code>radius/distance</code> for sphere/spot lights and <code>sin(angle/2)</code> for sun lights.
+The transition linearly blends from 0 at <code>N&middot;L = -s</code> to <code>s</code> at <code>N&middot;L = s</code>, then returns the raw <code>N&middot;L</code> above that.
+The effect is that surfaces just past the geometric horizon still receive a soft fringe of light from the area source, rather than an abrupt hard cutoff.
+This makes the diffuse falloff look more natural, especially for larger sphere lights at close range.
+</p>
+
+<p>
+For spot lights, the cone attenuation is linear in angle rather than a smoothstep on cosines, matching the s72 spec: full illumination within <code>(fov&middot;(1&minus;blend))/2</code> radians of the &minus;Z axis, zero outside <code>fov/2</code> radians, and a linear blend in between.
+I compute the actual angle <code>&theta; = acos(dot(fromLight, axis))</code> and then linearly interpolate between the inner and outer half-angles.
+The limit falloff uses the <code>max(0, 1 &minus; (d/limit)^4)</code> factor as suggested by Epic's notes, with a guard for infinite or missing limit values.
+</p>
+
+<h4>Specular lighting (PBR)</h4>
+
+<p>
+For the PBR specular path, I use the representative point idea to handle area lights.
+Rather than working in 3D position space (finding the closest point on the sphere surface to the reflection ray), I work entirely in direction space: I compute each light's angular diameter as seen from the shading point &mdash; <code>2&middot;asin(radius/distance)</code> for sphere/spot, or the stored <code>angle</code> for sun &mdash; and then find the direction on the corresponding disc that is closest to the reflection vector.
+The <code>representative_spec_L(V, N, Dir, Angle)</code> function does this: it reflects <code>&minus;V</code> about <code>N</code> to get the ideal reflection direction <code>R</code>, and if <code>R</code> already falls within the disc (i.e. <code>dot(R, Dir) > cos(Angle/2)</code>), it returns <code>R</code> directly.
+Otherwise, it projects <code>R</code> onto the plane perpendicular to the light center direction and walks along the disc edge to the closest point: <code>cos(halfAngle)&middot;Dir + sin(halfAngle)&middot;perp</code>.
+This approach treats all three light types uniformly &mdash; a sphere light becomes a disc of angular diameter <code>2&middot;asin(r/d)</code>, and a sun light is a disc of angular diameter <code>angle</code> &mdash; and avoids the discontinuities that a position-space representative point can introduce when the reflection ray passes through the sphere.
+</p>
+
+<p>
+The BRDF evaluation uses the standard Cook-Torrance microfacet model with the Schlick-GGX geometry term (using <code>k = (roughness+1)&sup2;/8</code> for the direct lighting path), the GGX normal distribution, and Schlick's Fresnel approximation.
+The full specular contribution per light is <code>(D&middot;G&middot;F) / (4&middot;N&middot;V&middot;N&middot;L + 0.001) &middot; radiance &middot; N&middot;L</code>, where <code>L</code> here is the representative specular direction, and <code>radiance</code> comes from the shared <code>incident_light</code> function.
+To account for the fact that an area light effectively widens the specular highlight, I multiply by a normalization factor <code>(&alpha;/&alpha;')&sup2;</code>, where <code>&alpha; = roughness&sup2;</code> and <code>&alpha;' = &alpha; + 0.5&middot;sin(lightAngle/2)</code>.
+This energy-conservation term ensures that the total reflected energy stays bounded as the highlight broadens: for a very small or distant light (tiny angle) the factor approaches 1 and the highlight is sharp, while for a large nearby sphere the factor reduces the peak intensity to compensate for the wider lobe.
+</p>
+
+<h4>Combining direct and environment lighting</h4>
+
+<p>
+Both the lambertian and PBR material branches sum the direct-light contributions on top of the existing environment IBL terms.
+For lambertian materials, the final color is <code>albedo &middot; (irradiance_IBL + irradiance_direct)</code>.
+For PBR materials, the specular and diffuse channels are each the sum of their IBL and direct components: <code>specular = specularIBL + specularDirect</code> and <code>diffuse = kD &middot; albedo &middot; (irradianceIBL + irradianceDirect)</code>.
+The environment contribution stays exactly as it was from A2; the per-light loop just accumulates additional radiance on top of it.
+When a scene has no lights, the shader loop simply doesn't execute and everything falls back to environment-only lighting.
+When a scene has no environment, the fallback 1&times;1 black cubemaps from A2 contribute zero, and the lighting comes entirely from the direct lights.
 </p>
 
 <figure>
