@@ -128,14 +128,14 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			},
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				.descriptorCount = 2 * per_workspace,	// set1 Transforms + set8 Lights (one descriptor each)
+				.descriptorCount = 3 * per_workspace,	// Transforms + Lights + Shadow_Transforms
 			},
 		};
 		
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,	// because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors alocated from this pool
-			.maxSets = 4 * per_workspace,	// Camera(0) + World(0) + Transforms(1) + Lights(8) — four sets per workspace
+			.maxSets = 5 * per_workspace,	// Camera + World + Transforms + Lights + Shadow_Transforms
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -231,6 +231,17 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			};
 
 			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Lights_descriptors));
+		}
+
+		{	// A3-shadow: allocate descriptor set for shadow pipeline's transforms view
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &shadow_pipeline.set0_Transforms,
+			};
+
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Shadow_Transforms_descriptors));
 		}
 
 		{	// A3-lights: initial SSBO storage (size matches first upload_lights rounding); count=0 until render uploads
@@ -1466,10 +1477,19 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					.range = workspace.Transforms.size,
 				};
 
-				std::array< VkWriteDescriptorSet, 1> writes {
+				std::array< VkWriteDescriptorSet, 2> writes {
 					VkWriteDescriptorSet {
 						.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 						.dstSet = workspace.Transforms_descriptors,
+						.dstBinding = 0,
+						.dstArrayElement = 0,
+						.descriptorCount = 1,
+						.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+						.pBufferInfo = &Transforms_info,
+					},
+					VkWriteDescriptorSet {
+						.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+						.dstSet = workspace.Shadow_Transforms_descriptors,
 						.dstBinding = 0,
 						.dstArrayElement = 0,
 						.descriptorCount = 1,
@@ -1480,8 +1500,8 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 				vkUpdateDescriptorSets(
 					rtg.device,
-					uint32_t(writes.size()), writes.data(),	// descriptorWrites count, data
-					0, nullptr	// descriptorCopies count, data
+					uint32_t(writes.size()), writes.data(),
+					0, nullptr
 				);
 
 				std::cout << "Re-allocated object transforms buffers to " << new_bytes << " bytes." << std::endl;
@@ -1530,6 +1550,81 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			0, nullptr,	// bufferMemoryBarriers (count, data)
 			0, nullptr	// imageMemoryBarriers (count, data)
 		);
+	}
+
+	// A3-shadow: render depth into each shadow map before the main pass
+	if (!shadow_maps.empty() && !object_instances.empty()) {
+		for (ShadowMap const &sm : shadow_maps) {
+			if (sm.framebuffer == VK_NULL_HANDLE) continue;
+
+			VkClearValue depth_clear{.depthStencil{.depth = 1.0f, .stencil = 0}};
+
+			VkRenderPassBeginInfo begin_info{
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = shadow_render_pass,
+				.framebuffer = sm.framebuffer,
+				.renderArea{
+					.offset = {.x = 0, .y = 0},
+					.extent = {.width = sm.resolution, .height = sm.resolution},
+				},
+				.clearValueCount = 1,
+				.pClearValues = &depth_clear,
+			};
+
+			vkCmdBeginRenderPass(workspace.command_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
+
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.handle);
+
+			{	// viewport & scissor
+				VkViewport viewport{
+					.x = 0.0f, .y = 0.0f,
+					.width = float(sm.resolution), .height = float(sm.resolution),
+					.minDepth = 0.0f, .maxDepth = 1.0f,
+				};
+				vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
+
+				VkRect2D scissor{
+					.offset = {.x = 0, .y = 0},
+					.extent = {.width = sm.resolution, .height = sm.resolution},
+				};
+				vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			}
+
+			{	// bind transforms SSBO (set 0)
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					shadow_pipeline.layout,
+					0, 1, &workspace.Shadow_Transforms_descriptors,
+					0, nullptr
+				);
+			}
+
+			{	// push light-space matrix
+				ShadowPipeline::Push push;
+				std::memcpy(push.LIGHT_CLIP_FROM_WORLD, &sm.LIGHT_CLIP_FROM_WORLD, sizeof(push.LIGHT_CLIP_FROM_WORLD));
+				vkCmdPushConstants(
+					workspace.command_buffer,
+					shadow_pipeline.layout,
+					VK_SHADER_STAGE_VERTEX_BIT,
+					0, sizeof(push), &push
+				);
+			}
+
+			{	// bind vertex buffer (same as main objects pass)
+				VkBuffer vb = (scene_vertices.handle != VK_NULL_HANDLE) ? scene_vertices.handle : object_vertices.handle;
+				std::array<VkBuffer, 1> vertex_buffers{vb};
+				std::array<VkDeviceSize, 1> offsets{0};
+				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+			}
+
+			for (ObjectInstance const &inst : object_instances) {
+				uint32_t index = uint32_t(&inst - &object_instances[0]);
+				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
+			}
+
+			vkCmdEndRenderPass(workspace.command_buffer);
+		}
 	}
 
 	// GPU commands

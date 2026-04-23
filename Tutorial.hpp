@@ -67,6 +67,9 @@ struct Tutorial : RTG::Application {
 		Helpers::AllocatedBuffer Lights_src;	// host coherent; mapped
 		Helpers::AllocatedBuffer Lights;	// device-local
 		VkDescriptorSet Lights_descriptors;	// references Lights
+
+		// A3-shadow: shadow pipeline's view of the same Transforms SSBO
+		VkDescriptorSet Shadow_Transforms_descriptors = VK_NULL_HANDLE;
 	};
 	std::vector< Workspace > workspaces;
 
