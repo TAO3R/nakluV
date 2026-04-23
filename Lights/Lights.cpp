@@ -157,29 +157,8 @@ void Tutorial::upload_lights(Workspace &workspace) {
 	vkCmdCopyBuffer(workspace.command_buffer, workspace.Lights_src.handle, workspace.Lights.handle, 1, &copy_region);
 }
 
-// =========================================================================
-// Shadow map resource management
-// =========================================================================
-
-void Tutorial::destroy_shadow_maps() {
-	for (auto &sm : shadow_maps) {
-		if (sm.framebuffer != VK_NULL_HANDLE) {
-			vkDestroyFramebuffer(rtg.device, sm.framebuffer, nullptr);
-			sm.framebuffer = VK_NULL_HANDLE;
-		}
-		if (sm.depth_view != VK_NULL_HANDLE) {
-			vkDestroyImageView(rtg.device, sm.depth_view, nullptr);
-			sm.depth_view = VK_NULL_HANDLE;
-		}
-		if (sm.depth_image.handle != VK_NULL_HANDLE) {
-			rtg.helpers.destroy_image(std::move(sm.depth_image));
-		}
-	}
-	shadow_maps.clear();
-}
-
 void Tutorial::create_shadow_resources() {
-	// --- 1. Create the depth-only render pass (once) ---
+	// Create the depth-only render pass (once)
 	if (shadow_render_pass == VK_NULL_HANDLE) {
 		VkAttachmentDescription depth_attachment{
 			.format = depth_format,
@@ -236,7 +215,7 @@ void Tutorial::create_shadow_resources() {
 		VK(vkCreateRenderPass(rtg.device, &rp_ci, nullptr, &shadow_render_pass));
 	}
 
-	// --- 2. Create the comparison sampler (once) ---
+	// Create the comparison sampler (once)
 	if (shadow_sampler == VK_NULL_HANDLE) {
 		VkSamplerCreateInfo sampler_ci{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -253,7 +232,7 @@ void Tutorial::create_shadow_resources() {
 		VK(vkCreateSampler(rtg.device, &sampler_ci, nullptr, &shadow_sampler));
 	}
 
-	// --- 3. Allocate per-spot-light shadow maps ---
+	// Allocate per-spot-light shadow maps
 	destroy_shadow_maps();
 
 	for (auto &[name, light] : scene_S72.lights) {
@@ -263,6 +242,7 @@ void Tutorial::create_shadow_resources() {
 		uint32_t res = light.shadow;
 
 		ShadowMap sm;
+		sm.light = const_cast<S72::Light *>(&light);
 		sm.resolution = res;
 		std::memset(&sm.LIGHT_CLIP_FROM_WORLD, 0, sizeof(sm.LIGHT_CLIP_FROM_WORLD));
 
@@ -314,4 +294,64 @@ void Tutorial::create_shadow_resources() {
 	}
 
 	std::cout << "[A3-shadow]: " << shadow_maps.size() << " shadow map(s) created." << std::endl;
+}
+
+void Tutorial::destroy_shadow_maps() {
+	for (auto &sm : shadow_maps) {
+		if (sm.framebuffer != VK_NULL_HANDLE) {
+			vkDestroyFramebuffer(rtg.device, sm.framebuffer, nullptr);
+			sm.framebuffer = VK_NULL_HANDLE;
+		}
+		if (sm.depth_view != VK_NULL_HANDLE) {
+			vkDestroyImageView(rtg.device, sm.depth_view, nullptr);
+			sm.depth_view = VK_NULL_HANDLE;
+		}
+		if (sm.depth_image.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_image(std::move(sm.depth_image));
+		}
+	}
+	shadow_maps.clear();
+}
+
+void Tutorial::update_shadow_matrices() {
+	if (shadow_maps.empty()) return;
+
+	uint32_t sm_idx = 0;
+	for (auto &li : light_instances) {
+		li.shadow_map_index = -1;
+
+		if (li.shadow == 0 || !std::holds_alternative<S72::Light::Spot>(li.light->source)) continue;
+
+		for (uint32_t j = 0; j < uint32_t(shadow_maps.size()); ++j) {
+			if (shadow_maps[j].light == li.light) {
+				li.shadow_map_index = int32_t(j);
+				sm_idx = j;
+				break;
+			}
+		}
+		if (li.shadow_map_index < 0) continue;
+
+		auto const &spot = std::get<S72::Light::Spot>(li.light->source);
+
+		float px = li.world_position.x;
+		float py = li.world_position.y;
+		float pz = li.world_position.z;
+
+		float dx = li.world_direction.x;
+		float dy = li.world_direction.y;
+		float dz = li.world_direction.z;
+
+		float near_plane = std::max(spot.radius, 0.01f);
+		float far_plane  = std::isinf(spot.limit) ? 100.0f : spot.limit;
+
+		mat4 view = look_at(
+			px, py, pz,
+			px + dx, py + dy, pz + dz,
+			0.0f, 0.0f, 1.0f
+		);
+
+		mat4 proj = perspective(spot.fov, 1.0f, near_plane, far_plane);
+
+		shadow_maps[sm_idx].LIGHT_CLIP_FROM_WORLD = proj * view;
+	}
 }

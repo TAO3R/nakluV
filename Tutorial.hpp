@@ -638,6 +638,7 @@ struct Tutorial : RTG::Application {
 		struct { float x, y, z; } world_position = {0.f, 0.f, 0.f};
 		struct { float x, y, z; } world_direction = {0.f, 0.f, -1.f};
 		uint32_t shadow = 0;
+		int32_t shadow_map_index = -1;
 	};
 	std::vector<LightInstance> light_instances;
 
@@ -697,6 +698,7 @@ struct Tutorial : RTG::Application {
 
 	/** Per-spot-light shadow map resources */
 	struct ShadowMap {
+		S72::Light *light = nullptr;
 		Helpers::AllocatedImage depth_image;
 		VkImageView depth_view = VK_NULL_HANDLE;
 		VkFramebuffer framebuffer = VK_NULL_HANDLE;
@@ -718,6 +720,12 @@ struct Tutorial : RTG::Application {
 
 	/** Destroys all shadow map images/views/framebuffers (but not the render pass or sampler) */
 	void destroy_shadow_maps();
+
+	/**
+	 * Called each frame after traverse_node.
+	 * Matches light_instances to shadow_maps, computes LIGHT_CLIP_FROM_WORLD per shadow-casting spot light.
+	 */
+	void update_shadow_matrices();
 
 	/** Pipeline for rendering shadow maps */
 	struct ShadowPipeline {

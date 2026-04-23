@@ -2277,6 +2277,7 @@ void Tutorial::update(float dt) {
 			}
 
 			log_lights();
+			update_shadow_matrices();
 		}
 		else	// no scene: use hardcoded plane and torus
 		{
