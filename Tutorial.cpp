@@ -798,8 +798,9 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		load_brdf_lut();
 	}
 
-	{	// A3-shadow: create shadow render pass, sampler, and per-spot-light shadow maps
+	{	// A3-shadow: create shadow render pass, sampler, shadow maps, and shadow pipeline
 		create_shadow_resources();
+		shadow_pipeline.create(rtg, shadow_render_pass, 0);
 	}
 
 	{ // create the texture descriptor pool
@@ -1049,6 +1050,7 @@ Tutorial::~Tutorial() {
 
 	// A3-shadow: cleanup
 	destroy_shadow_maps();
+
 	if (shadow_sampler != VK_NULL_HANDLE) {
 		vkDestroySampler(rtg.device, shadow_sampler, nullptr);
 		shadow_sampler = VK_NULL_HANDLE;
@@ -1223,6 +1225,7 @@ Tutorial::~Tutorial() {
 	background_pipeline.destroy(rtg);
 	lines_pipeline.destroy(rtg);
 	objects_pipeline.destroy(rtg);
+	shadow_pipeline.destroy(rtg);
 
 	// refsol::Tutorial_destructor(rtg, &render_pass, &command_pool);
 	// destroy command pool

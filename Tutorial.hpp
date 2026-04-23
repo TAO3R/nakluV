@@ -170,6 +170,7 @@ struct Tutorial : RTG::Application {
 		void destroy(RTG &);
 	} objects_pipeline;
 
+
 	//-------------------------------------------------------------------
 	//static scene resources:
 
@@ -717,4 +718,23 @@ struct Tutorial : RTG::Application {
 
 	/** Destroys all shadow map images/views/framebuffers (but not the render pass or sampler) */
 	void destroy_shadow_maps();
+
+	/** Pipeline for rendering shadow maps */
+	struct ShadowPipeline {
+		VkDescriptorSetLayout set0_Transforms = VK_NULL_HANDLE;
+
+		struct Push {
+			float LIGHT_CLIP_FROM_WORLD[16];
+		};
+		static_assert(sizeof(Push) == 64, "ShadowPipeline push constant is one mat4.");
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+
+		using Vertex = PosNorTexVertex;
+
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
+		void destroy(RTG &);
+	} shadow_pipeline;
 };

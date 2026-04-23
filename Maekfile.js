@@ -65,6 +65,13 @@ const objects_shaders = [
 ];
 main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
 
+// A3-shadow: shadow pipeline shaders and source
+const shadow_shaders = [
+	maek.GLSLC('Lights/shadow.vert'),
+	maek.GLSLC('Lights/shadow.frag'),
+];
+main_objs.push( maek.CPP('Lights/ShadowPipeline.cpp', undefined, { depends:[...shadow_shaders] } ) );
+
 // const prebuilt_objs = [ ];
 
 //use the prebuilt refsol.o unless refsol.cpp exists:
