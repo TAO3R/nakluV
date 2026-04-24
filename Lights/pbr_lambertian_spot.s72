@@ -71,6 +71,13 @@
 	"mesh":"Mesh.005"
 },
 {
+	"type":"MATERIAL",
+	"name":"lambertian:Material.002",
+	"lambertian":{
+		"albedo":[ 0.8, 0.8, 0.8 ]
+	}
+},
+{
 	"type":"MESH",
 	"name":"Plane",
 	"topology":"TRIANGLE_LIST",
@@ -80,7 +87,8 @@
 		"NORMAL":{ "src":"pbr_lambertian_spot.Plane.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
 		"TANGENT":{ "src":"pbr_lambertian_spot.Plane.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
 		"TEXCOORD":{ "src":"pbr_lambertian_spot.Plane.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
-	}
+	},
+	"material":"lambertian:Material.002"
 },
 {
 	"type":"NODE",
@@ -128,8 +136,7 @@
 		"power":205.1,
 		"fov":0.785398,
 		"blend":0.15
-	},
-	"shadow":1024
+	}
 },
 {
 	"type":"NODE",
@@ -140,8 +147,36 @@
 	"light":"Spot"
 },
 {
+	"type":"MATERIAL",
+	"name":"lambertian:Material",
+	"lambertian":{
+		"albedo":[ 0.8, 0.8, 0.8 ]
+	}
+},
+{
+	"type":"MESH",
+	"name":"Cube",
+	"topology":"TRIANGLE_LIST",
+	"count":36,
+	"attributes":{
+		"POSITION":{ "src":"pbr_lambertian_spot.Cube.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"pbr_lambertian_spot.Cube.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"pbr_lambertian_spot.Cube.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"pbr_lambertian_spot.Cube.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"lambertian:Material"
+},
+{
+	"type":"NODE",
+	"name":"Cube",
+	"translation":[1.49422,0,-0.52424],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"mesh":"Cube"
+},
+{
 	"type":"SCENE",
 	"name":"Lights\\pbr_lambertian_spot.blend",
-	"roots":["Camera", "pCube1", "pCube2", "Plane", "Cone", "Spot"]
+	"roots":["Camera", "pCube1", "pCube2", "Plane", "Cone", "Spot", "Cube"]
 }
 ]
