@@ -106,6 +106,11 @@ code var {
 .atag.creative {
 	background:linear-gradient(0.35turn, #fcacff, #f9ab93, #76a1e4, #20953d);
 }
+.center-video {
+    display: block;   /* Important: video is inline by default */
+    margin-left: auto;
+    margin-right: auto;
+}
 
 </style>
 <!-- Load Chart.js for creating charts (documentation https://www.chartjs.org/docs/latest/ ) -->
@@ -130,11 +135,12 @@ Remember to remove the placeholder class from your text; since (of course) your 
 
 <h2>My Lit Scene <span class="atag creative">A3-create</span></h2>
 
-<p class="placeholder">
-Describe the scene you lit, the light count and placement approach, and include a screen recording showing it running in real-time:
+<p>
+<!-- Describe the scene you lit, the light count and placement approach, and include a screen recording showing it running in real-time: -->
+I created a scene in blender with a plane scaled from a cube, a cube placed on the plane, and a spot light that rotates around the cube.
 </p>
 
-<video>
+<!-- <video> -->
 <!--
   you can use the 'video' element to show your code running
   Learn more at:
@@ -143,25 +149,42 @@ Describe the scene you lit, the light count and placement approach, and include 
   Example: put the video file in a path near this .html
   <source src="path/to/video" type="video/mp4" />
 -->
+<!-- </video> -->
+
+<video class="center-video" width="640" height="360" controls>
+	<source src="report_files/create_rotating_lights.s72.mp4" type="video/mp4" />
 </video>
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Credit + cite your sources for textures and models, if you did not create them yourself.
-</p>
+</p> -->
 
 <h3>Command-line Arguments (Viewer)</h3>
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Document the command-line arguments that can be used to control your viewer.
 This will probably be a copy of the section from your A2 report with a few new flags relating to lights (if you added any).
-</p>
+</p> -->
+
+<ul>
+<li><code>--scene <var>scene.s72</var></code> -- required -- load scene from <code><var>scene.s72</var></code></li>
+<li><code>--print </code> -- optional -- print scene information from <code><var>scene.s72</var></code></li>
+<li><code>--camera <var>name</var></code> -- optional -- start the viewer in scene camera mode with the scene camera specified by <code><var>name</var></code></li>
+<li><code>--culling <var>none/frusutm</var></code> -- optional -- use <code><var>none/frustum</var></code> as culling mode</li>
+
+<li><code>--exposure <var>E</var></code> &mdash; set the exposure exponent (float). All radiance values are
+multiplied by 2<sup><var>E</var></sup> before tone mapping. Default: <code>0</code> (i.e., multiplier&nbsp;=&nbsp;1.0).
+Positive values brighten the image; negative values darken it.</li>
+<li><code>--tone-map <var>mode</var></code> &mdash; select the tone mapping operator.
+Values: <code>linear</code> (clamp to [0,1], the default), <code>reinhard</code> (Reinhard operator: <code>c/(1+c)</code>).</li>
+</ul>
 
 <h2>Evidence</h2>
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 The purpose of this section is to get you to think critically about your code by providing evidence sufficient to demonstrate to course staff that it works.
 These thoughts may also help you improve the code as you work on it in the Final project and beyond.
-</p>
+</p> -->
 
 <h3>Loading light objects <span class="atag">A3-load</span></h3> 
 
@@ -273,6 +296,14 @@ When a scene has no lights, the shader loop simply doesn't execute and everythin
 When a scene has no environment, the fallback 1&times;1 black cubemaps from A2 contribute zero, and the lighting comes entirely from the direct lights.
 </p>
 
+<p>
+	<br>
+Rendering the scene "lights-Parameters.s72":
+<video class="center-video" width="640" height="360" controls>
+	<source src="report_files/materials_lights-parameters.s72.mp4" type="video/mp4" />
+</video>
+</p>
+
 <figure>
 <!-- Feel free to use and duplicate the below example graph to plot data
  	 Edit labels and variables in script below the canvas -->
@@ -323,20 +354,128 @@ window.addEventListener('load', () => {
 
 <h3>Adding Shadows for Spot Lights <span class="atag">A3-shadows</span></h3>
 
-<p class="placeholder">
-Cover, at least:
-how (and when) your viewer renders shadow maps;
-how your viewer works to avoid shadow map artifacts (e.g., rendering backfaces; using bias/offset; ...);
-how cube map textures are provided to materials;
-how many PCF samples your code takes and how it weights them.
+<p>
+I implemented per-frame shadow mapping for spot lights using a separate depth-only render pass,
+a dedicated <code>ShadowPipeline</code>, and percentage-closer filtering (PCF) in the fragment shader.
+The implementation spans four areas: Vulkan resource setup, per-frame light-space matrix computation,
+the depth rendering pass, and the PCF sampling logic in the objects fragment shader.
 </p>
 
+<p>
+<b>1. Shadow map resources (<code>Lights/Lights.cpp</code>)</b><br>
+At startup, <code>create_shadow_resources()</code> iterates over all lights in the loaded scene
+and creates a <code>ShadowMap</code> for each spot light whose <code>shadow</code> parameter is non-zero.
+The <code>shadow</code> value is interpreted as the edge length of the shadow map in pixels,
+so a light with <code>"shadow": 512</code> gets a 512&times;512 depth texture.
+Each <code>ShadowMap</code> holds a <code>VK_FORMAT_D32_SFLOAT</code> (or <code>X8_D24_UNORM_PACK32</code>,
+whichever is supported) depth image with both <code>DEPTH_STENCIL_ATTACHMENT</code> and <code>SAMPLED</code>
+usage flags, an image view with <code>VK_IMAGE_ASPECT_DEPTH_BIT</code>, and a <code>VkFramebuffer</code>
+referencing the depth-only render pass.
+I also create a comparison sampler shared by all shadow maps: linear filtering with
+<code>VK_COMPARE_OP_LESS_OR_EQUAL</code>, clamp-to-border addressing, and an opaque-white border color
+(so samples outside the shadow map read as depth&nbsp;=&nbsp;1.0 and are considered lit).
+For descriptor set slots not backed by a real shadow map, I create a 1&times;1 dummy depth image
+(<code>ensure_dummy_shadow_map()</code>) that is transitioned to
+<code>DEPTH_STENCIL_READ_ONLY_OPTIMAL</code> via a one-shot render pass so the descriptor is always valid.
+</p>
+
+<p>
+<b>2. Light-space matrices (<code>Lights/Lights.cpp</code>)</b><br>
+Each frame, after <code>traverse_node</code> has filled <code>light_instances</code>,
+I call <code>update_shadow_matrices()</code>.
+For every spot-light instance with <code>shadow &gt; 0</code>, I match it to its pre-allocated
+<code>ShadowMap</code> entry by the <code>S72::Light*</code> pointer and compute the light-space
+clip matrix <code>LIGHT_CLIP_FROM_WORLD = P &middot; V</code>.
+The view matrix <code>V</code> comes from <code>look_at(position, position&nbsp;+&nbsp;direction, up)</code>,
+where position and direction are extracted from the node's world transform
+(direction is the negated third column &mdash; the local &minus;Z axis in the s72 convention).
+The projection matrix <code>P</code> uses <code>perspective(spot.fov, 1.0, near, far)</code>,
+matching the spot cone's full opening angle so the shadow map exactly covers the illuminated region.
+The near plane is <code>max(spot.radius, 0.01)</code> and the far plane is <code>spot.limit</code>
+(or 100.0 if limit is infinite).
+The computed matrix is stored in <code>ShadowMap::LIGHT_CLIP_FROM_WORLD</code> and also uploaded
+to a per-workspace UBO (<code>ShadowMatrices_ubo</code>) via <code>upload_shadow_params()</code>
+so the fragment shader can project world positions into light clip space.
+</p>
+
+<p>
+<b>3. Shadow depth pass (<code>Tutorial.cpp</code>, <code>Lights/ShadowPipeline.cpp</code>)</b><br>
+I created a separate depth-only render pass (<code>shadow_render_pass</code>) with a single
+depth attachment that loads with <code>VK_ATTACHMENT_LOAD_OP_CLEAR</code> (to 1.0),
+stores with <code>VK_ATTACHMENT_STORE_OP_STORE</code>, and transitions to
+<code>VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL</code> at the end &mdash;
+ready for sampling in the main fragment shader.
+Two subpass dependencies enforce the write-before-read ordering:
+one that waits for any previous fragment shader reads to finish before the depth attachment is written,
+and one that ensures the depth writes complete before subsequent fragment shader reads.
+</p>
+
+<p>
+The shadow pipeline (<code>Lights/ShadowPipeline.cpp</code>) is a minimal graphics pipeline with
+a vertex shader (<code>Lights/shadow.vert</code>) that transforms vertices from local to light clip space
+(<code>gl_Position = LIGHT_CLIP_FROM_WORLD * WORLD_FROM_LOCAL * vec4(Position, 1.0)</code>)
+and a trivial fragment shader (<code>Lights/shadow.frag</code>) with no color output.
+The pipeline uses:
+<code>VK_CULL_MODE_BACK_BIT</code> with back-face culling,
+hardware depth bias (<code>depthBiasConstantFactor = 2.0</code>, <code>depthBiasSlopeFactor = 2.0</code>)
+to push shadow map depths slightly away from the light and reduce self-shadowing artifacts,
+and dynamic viewport/scissor so each shadow map can use its own resolution.
+The light-space matrix is passed as a push constant (<code>mat4</code>, 64 bytes),
+and the object transforms are read from the same SSBO as the main objects pass
+(a separate but identically-written descriptor set allocated from <code>shadow_pipeline.set0_Transforms</code>).
+</p>
+
+<p>
+In <code>Tutorial::render()</code>, the shadow depth passes execute <em>after</em> the transfer barrier
+(all buffer uploads are complete) and <em>before</em> the main render pass.
+For each <code>ShadowMap</code>, I begin the shadow render pass on its framebuffer,
+bind the shadow pipeline, set viewport and scissor to the shadow map's resolution,
+bind the transforms SSBO descriptor, push the light-space matrix, bind the scene vertex buffer,
+and draw every <code>ObjectInstance</code>.
+Because this runs every frame, animated lights and objects automatically get updated shadows.
+</p>
+
+<p>
+<b>4. PCF sampling in the fragment shader (<code>objects.frag</code>)</b><br>
+I declared the shadow map textures as <code>sampler2DShadow SHADOW_MAPS[8]</code> at descriptor set 9, binding 0,
+alongside a UBO at binding 1 containing the array of <code>mat4 light_clip_from_world</code> matrices.
+Each <code>GPULight</code> in the lights SSBO carries a <code>shadow_map_index</code> (set to &minus;1 for non-shadow-casting lights).
+</p>
+
+<p>
+The <code>shadow_pcf()</code> function is called from <code>incident_light()</code> for every spot light with a valid shadow map index.
+It projects the world-space fragment position into light clip space, performs the perspective divide,
+and maps x/y from NDC [&minus;1,&nbsp;1] to UV [0,&nbsp;1].
+Fragments behind the light (<code>w &le; 0</code>) or outside the [0,&nbsp;1] UV/depth range early-out as fully lit.
+</p>
+
+<p>
+I use a <b>3&times;3 PCF kernel (9 samples)</b> with uniform weighting.
+Each sample offsets the UV by one texel in a grid pattern from (&minus;1,&minus;1) to (+1,+1),
+and the texel size is computed as <code>1.0 / textureSize(SHADOW_MAPS[i], 0).x</code>.
+Because the comparison sampler has linear filtering enabled with <code>VK_COMPARE_OP_LESS_OR_EQUAL</code>,
+each <code>texture()</code> call already performs a hardware 2&times;2 bilinear comparison filter,
+so the effective filter footprint is 4&times;4 depth comparisons (16 samples).
+The 9 comparison results are averaged equally: <code>shadow = sum / 9.0</code>.
+This produces smooth shadow edges with a gradual falloff from fully lit to fully shadowed.
+The resulting shadow factor is multiplied into the light's radiance before it reaches the diffuse and specular evaluation,
+so shadowed areas receive zero direct contribution from the occluded light while still receiving
+environment IBL as usual.
+</p>
 
 <p class="placeholder">
 Include output images showing that spot light shadows are working correctly for both lambertian and pbr materials.
 </p>
-<p class="placeholder">
+<!-- <p class="placeholder">
 Include output images showing that "shadow" light parameter does actually change the shadow map resolution.
+</p> -->
+
+<p>
+	<br>
+Rendering the scene "lights-Spot-Shadows.s72" for different shadowmap resolution:
+<video class="center-video" width="640" height="360" controls>
+	<source src="report_files/shadows_lights-spot-parameters.mp4" type="video/mp4" />
+</video>
 </p>
 
 <p class="placeholder">
@@ -346,7 +485,7 @@ Attempt to separate the performance impact of shadow map rendering and shadow ma
 
 
 
-<h3>Extra: Light Sort <span class="atag extra">A3x-sort</span></h3>
+<!-- <h3>Extra: Light Sort <span class="atag extra">A3x-sort</span></h3>
 
 <p class="placeholder">
 Cover, at least:
@@ -359,66 +498,65 @@ Include a screen shot (and the scene itself).
 <p class="placeholder">
 Include data demonstrating the performance improvement in rendering this scene.
 E.g., a graph of the frame times for an animated fly-through of the scene with and without your sorting code enabled.
-</p>
+</p> -->
 
-<h3>Extra: PCSS Soft Shadows <span class="atag extra">A3x-soft</span></h3>
+<!-- <h3>Extra: PCSS Soft Shadows <span class="atag extra">A3x-soft</span></h3> -->
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Cover, at least:
 your implementation of PCSS (sampling pattern, counts)
-</p>
+</p> -->
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Include images showing the same shadows rendered with and without PCSS, showing the spreading behavior as the shadow stretches further from the light.
-</p>
+</p> -->
 
-<h3>Extra: Shadows for Sun Lights <span class="atag extra">A3x-cascade</span></h3>
+<!-- <h3>Extra: Shadows for Sun Lights <span class="atag extra">A3x-cascade</span></h3> -->
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Cover, at least:
 your choice of shadow map cascade levels and layout;
 how your cascade is packed into a texture;
 how [if at all] your cascade avoids "boiling" as the camera moves
-</p>
+</p> -->
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Include images showing a scene rendered with a shadow-casting distant directional light.
 Include images with a modified shader color-coding pixels by what cascade level they are sampling.
 Include images from a debug camera, showing how the shadow map cascade fits the camera frustum.
-</p>
+</p> -->
 
-<h3>Extra: Shadows for Sphere Lights <span class="atag extra">A3x-cube</span></h3>
+<!-- <h3>Extra: Shadows for Sphere Lights <span class="atag extra">A3x-cube</span></h3> -->
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Cover, at least:
 how you chose to set up cameras for cube map rendering
-</p>
+</p> -->
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Include images or video showing a scene rendered with a shadow-casting sphere light.
 Show that there are no artifacts at the edges or corners of the shadow map cube.
-</p>
+</p> -->
 
+<!-- <h3>Extra: Other <span class="atag extra">A3x-*</span></h3> -->
 
-<h3>Extra: Other <span class="atag extra">A3x-*</span></h3>
-
-<p class="placeholder">
+<!-- <p class="placeholder">
 If you have received instructor permission to pursue another extra credit activity, include information about that activity here.
-</p>
+</p> -->
 
 
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Include images or video showing a scene rendered with a shadow-casting sphere light.
 Show that there are no artifacts at the edges or corners of the shadow map cube.
-</p>
+</p> -->
 
 
 
-<h2>Feedback</h2>
+<!-- <h2>Feedback</h2>
 <p class="placeholder">
 This is the end of the structured report. Feel free to add feedback about A1 to this section.
-</p>
+</p> -->
 
 
 
