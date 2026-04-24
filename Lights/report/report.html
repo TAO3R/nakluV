@@ -139,19 +139,25 @@ code var {
 </head>
 <body>
 <h1>A3: Lights
-<span class="subtitle">by <span class="placeholder">Jim McCann (jmccann)</span></span>
+<span class="subtitle">by <span>Tao Jin (tjin2)</span></span>
 </h1>
 
-<!-- of course, delete these class="placeholder" notes in your report: -->
-
-
-<p class="placeholder">
-Summarize, in about one paragraph, your approach to the lights assignment.
-How did you structure your code?
-What's cool about it? Are there parts you weren't able to complete? 
-</p>
-<p class="placeholder">
-Remember to remove the placeholder class from your text; since (of course) your report information isn't a placeholder and shouldn't be styled as such!
+<p>
+For the lights assignment, I extended the viewer from A2 to support sun, sphere, and spot lights
+with physically-based attenuation, and added per-frame shadow mapping for spot lights with PCF filtering.
+I organized the new code into a <code>Lights/</code> directory:
+<code>Lights/Lights.cpp</code> handles light instance collection, GPU upload (SSBO at set 8),
+shadow map resource creation, and per-frame light-space matrix computation;
+<code>Lights/ShadowPipeline.cpp</code> defines a separate depth-only graphics pipeline with its own
+vertex shader (<code>Lights/shadow.vert</code>) and trivial fragment shader (<code>Lights/shadow.frag</code>).
+On the shader side, all light types share a single <code>incident_light()</code> function in <code>objects.frag</code>
+that computes direction, inverse-square falloff, spot cone attenuation, limit falloff, and shadow lookup,
+so both the diffuse and specular paths call the same code without duplicating attenuation math.
+For PBR specular, I use a direction-space representative point technique for area-light highlights
+with energy-conservation normalization.
+Shadow maps are rendered per-frame before the main pass, supporting animated lights and scenes,
+and the fragment shader samples them with a 3&times;3 PCF kernel using a hardware comparison sampler
+for smooth shadow edges.
 </p>
 
 <h2>My Lit Scene <span class="atag creative">A3-create</span></h2>
@@ -328,7 +334,7 @@ Rendering the scene "lights-Parameters.s72":
 <figure>
 <!-- Feel free to use and duplicate the below example graph to plot data
  	 Edit labels and variables in script below the canvas -->
-<canvas id="A3-light-perf" style="display: block; width: 600px; max-width: 600px; margin: 0px auto; background: rgb(255, 255, 255); box-sizing: border-box; height: 300px;" width="750" height="375"></canvas>
+<!-- <canvas id="A3-light-perf" style="display: block; width: 600px; max-width: 600px; margin: 0px auto; background: rgb(255, 255, 255); box-sizing: border-box; height: 300px;" width="750" height="375"></canvas>
 <figcaption>
 The performance of my materials on a given number of lights.
 The result of (my tone-mapping curve) applied to a color of increasing intensity.
@@ -371,7 +377,7 @@ window.addEventListener('load', () => {
 		}
 	});
 });
-</script>
+</script> -->
 
 <h3>Adding Shadows for Spot Lights <span class="atag">A3-shadows</span></h3>
 
@@ -507,9 +513,15 @@ Rendering the scene "lights-Spot-Shadows.s72" for different shadowmap resolution
 </video>
 </p>
 
-<p class="placeholder">
-Include a graph showing the performance impact of adding shadowing to lights to a scene.
-Attempt to separate the performance impact of shadow map rendering and shadow map sampling (e.g., by testing the same scenes with per-frame rendered shadow maps and pre-rendered shadow maps). Which is larger?
+<p>
+I edited the above pbr-and-lambertian scene to populate two scenes with 1000 lights, one scene with shadows and the other without, and profiled their performance.
+<img src="report_files/shadows_no_shadow_profile.png" alt="1000 lights scene without shadow" class="center_image">
+<img src="report_files/shadows_has_shadow_profile.png" alt="1000 lights scene with shadow" class="center_image">
+
+We can conclude from the above result that rendering and sampling shadowmaps have performance impact. <br>
+
+If to separate shadowmap rendering and shadowmap sampling,
+one can create a static scene and render the shadowmap at the first frame and use it in later frames without changing it.
 </p>
 
 
