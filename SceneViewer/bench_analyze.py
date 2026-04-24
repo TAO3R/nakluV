@@ -4,7 +4,7 @@ import os
 
 # --- 1. Path Setup ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
-csv_path = os.path.join(script_dir, '../../A1/report/benchmarks/gpu_bottleneck/gpu_7680_4320.csv')
+csv_path = os.path.join(script_dir, '../Lights/shadows_no_shadow.csv')
 filename_only = os.path.basename(csv_path)
 
 try:
