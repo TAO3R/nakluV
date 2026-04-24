@@ -1122,7 +1122,7 @@ void RTG::run(Application &application) {
 	// A1 test: Write benchmark CSV once (avoid per-frame I/O overhead).
 	if (configuration.headless && !bench_render_ms.empty()) {
 		// Note: avoid backslashes in string literals ("\A" etc.); use forward slashes instead.
-		std::filesystem::path csv_path = "../A1/report/benchmarks/bench.csv";
+		std::filesystem::path csv_path = "../A3/bench.csv";
 		std::error_code ec;
 		std::filesystem::create_directories(csv_path.parent_path(), ec);
 		if (ec) {

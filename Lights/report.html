@@ -111,6 +111,27 @@ code var {
     margin-left: auto;
     margin-right: auto;
 }
+.center_image {
+    display: block;      /* Required to make margins work */
+    margin-left: auto;   /* Pushes from the left */
+    margin-right: auto;  /* Pushes from the right */
+    
+    /* Good practice for responsiveness */
+    max-width: 100%;     
+    height: auto;        
+}
+.image-row {
+    display: flex;            /* Enables side-by-side layout */
+    justify-content: center;  /* Centers the pair of images on the page */
+    gap: 20px;               /* Adds space between the two images */
+    width: 100%;
+    margin: 20px 0;          /* Adds space above and below the row */
+}
+.image-row img {
+    max-width: 50%;          /* Ensures they fit together (roughly 50% each) */
+    height: auto;            /* Maintains aspect ratio */
+    display: block;
+}
 
 </style>
 <!-- Load Chart.js for creating charts (documentation https://www.chartjs.org/docs/latest/ ) -->
@@ -463,9 +484,17 @@ so shadowed areas receive zero direct contribution from the occluded light while
 environment IBL as usual.
 </p>
 
-<p class="placeholder">
+<!-- <p class="placeholder">
 Include output images showing that spot light shadows are working correctly for both lambertian and pbr materials.
+</p> -->
+<p>
+<br>Meshes with pbr and lambertian materials receiving lights:
+<div class="image-row">
+    <img src="report_files/shadows_pbr_lambertian_blender.png" alt="scene in blender">
+    <img src="report_files/shadows_pbr_lambertian_nakluV.png" alt="scene in nakluV">
+</div>
 </p>
+
 <!-- <p class="placeholder">
 Include output images showing that "shadow" light parameter does actually change the shadow map resolution.
 </p> -->
