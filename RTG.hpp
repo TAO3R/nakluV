@@ -91,6 +91,9 @@ struct RTG {
 		// A2-tone:
 		float exposure = 0.0f;				// --exposure E (multiplier is 2^E)
 		std::string tone_map = "linear";	// --tone-map linear|reinhard
+
+		// SSAO/SSDO debug visualization:
+		std::string debug_view = "";		// --debug-view position|normal|albedo|depth
 	};	
 
 	Configuration configuration; //configuration, as used (might have extra extensions, layers, or flags added)

@@ -72,6 +72,29 @@ const shadow_shaders = [
 ];
 main_objs.push( maek.CPP('Lights/ShadowPipeline.cpp', undefined, { depends:[...shadow_shaders] } ) );
 
+// SSAO/SSDO: G-buffer, deferred lighting, and debug visualization
+const gbuffer_shaders = [
+	maek.GLSLC('SSAO/gbuffer.vert'),
+	maek.GLSLC('SSAO/gbuffer.frag'),
+];
+main_objs.push( maek.CPP('SSAO/GBufferPipeline.cpp', undefined, { depends:[...gbuffer_shaders] } ) );
+
+const fullscreen_vert = maek.GLSLC('SSAO/fullscreen.vert');
+
+const deferred_lighting_shaders = [
+	fullscreen_vert,
+	maek.GLSLC('SSAO/deferred_lighting.frag', undefined, { depends:['Materials/tonemap.glsl'] }),
+];
+main_objs.push( maek.CPP('SSAO/DeferredLightingPipeline.cpp', undefined, { depends:[...deferred_lighting_shaders] } ) );
+
+const debug_gbuffer_shaders = [
+	fullscreen_vert,
+	maek.GLSLC('SSAO/debug_gbuffer.frag'),
+];
+main_objs.push( maek.CPP('SSAO/DebugGBufferPipeline.cpp', undefined, { depends:[...debug_gbuffer_shaders] } ) );
+
+main_objs.push( maek.CPP('SSAO/SSAO.cpp') );
+
 // const prebuilt_objs = [ ];
 
 //use the prebuilt refsol.o unless refsol.cpp exists:

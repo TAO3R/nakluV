@@ -776,4 +776,122 @@ struct Tutorial : RTG::Application {
 		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
 		void destroy(RTG &);
 	} shadow_pipeline;
+
+	//--------------------------------------------------------------------
+	// F: SSAO/SSDO:
+
+	// G-BUFFER
+
+	Helpers::AllocatedImage gbuf_position;
+	VkImageView gbuf_position_view = VK_NULL_HANDLE;
+	Helpers::AllocatedImage gbuf_normal;
+	VkImageView gbuf_normal_view = VK_NULL_HANDLE;
+	Helpers::AllocatedImage gbuf_albedo;
+	VkImageView gbuf_albedo_view = VK_NULL_HANDLE;
+	Helpers::AllocatedImage gbuf_depth_image;
+	VkImageView gbuf_depth_view = VK_NULL_HANDLE;
+	VkRenderPass gbuf_render_pass = VK_NULL_HANDLE;
+	VkFramebuffer gbuf_framebuffer = VK_NULL_HANDLE;
+	VkSampler gbuf_sampler = VK_NULL_HANDLE;
+
+	void create_gbuffer_render_pass();
+	void create_gbuffer_images(VkExtent2D extent);
+	void destroy_gbuffer_images();
+
+
+	// DEBUG VISUALIZATION
+
+	enum class GBufDebugView : uint32_t {
+		None = 0,
+		Position = 1,
+		Normal = 2,
+		Albedo = 3,
+		Depth = 4,
+		Count = 5,
+	};
+	GBufDebugView gbuf_debug_view = GBufDebugView::None;
+
+
+	// G-BUFFER PIPELINE
+
+	struct GBufferPipeline {
+		VkDescriptorSetLayout set0_World = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set2_Texture = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set3_Cubemap = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set4_LambertianCubemap = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set5_NormalMap = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set6_PBRMaps = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set7_PBREnv = VK_NULL_HANDLE;
+
+		struct Push {
+			uint32_t material_type;
+			float eye_x, eye_y, eye_z;
+		};
+		static_assert(sizeof(Push) == 16, "GBufferPipeline::Push is 16 bytes");
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+
+		using Vertex = PosNorTexVertex;
+
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
+		void destroy(RTG &);
+	} gbuffer_pipeline;
+
+
+	// DEFERRED LIGHTING
+
+	struct DeferredLightingPipeline {
+		VkDescriptorSetLayout set0_GBuffer = VK_NULL_HANDLE;
+
+		struct Push {
+			float eye_x, eye_y, eye_z;
+			float _pad;
+		};
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass,
+			VkDescriptorSetLayout set0_GBuffer,
+			VkDescriptorSetLayout set1_World,
+			VkDescriptorSetLayout set2_Lights,
+			VkDescriptorSetLayout set3_Shadows,
+			VkDescriptorSetLayout set4_Cubemap,
+			VkDescriptorSetLayout set5_LambertianCubemap,
+			VkDescriptorSetLayout set6_PBREnv);
+		void destroy(RTG &);
+	} deferred_lighting_pipeline;
+
+	VkDescriptorSetLayout deferred_set0_GBuffer = VK_NULL_HANDLE;
+	VkDescriptorPool deferred_descriptor_pool = VK_NULL_HANDLE;
+
+	struct DeferredWorkspace {
+		VkDescriptorSet gbuffer_descriptors = VK_NULL_HANDLE;
+	};
+	std::vector<DeferredWorkspace> deferred_workspaces;
+
+	void create_deferred_descriptors();
+	void update_deferred_descriptors(uint32_t workspace_index);
+
+	
+	// DEBUG G-BUFFER VISUALIZATION PIPELINE
+
+	struct DebugGBufferPipeline {
+		struct Push {
+			uint32_t debug_mode;
+			float near_plane;
+			float far_plane;
+			float _pad;
+		};
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass,
+			VkDescriptorSetLayout set0_GBuffer);
+		void destroy(RTG &);
+	} debug_gbuffer_pipeline;
 };

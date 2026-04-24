@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>15-472-s26: F - SSAO/SSDO</title>
+<style>
+/* feel free to style your report in a fancier way! */
+
+@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;700&Anonymous+Pro&display=swap');
+
+html {
+	background:#505055;
+}
+
+body {
+	font-family: 'Quicksand', sans-serif;
+	color:#000;
+	background:#eeeee8;
+	font-size:15px;
+	margin: 1em auto 50vh auto;
+	padding: 1em 2em 1em 2em;
+	max-width:45em;
+	border-radius:4px;
+	box-shadow:0 0 10px #0008;
+}
+
+h1 { font-size: 20px; font-weight: 700; }
+h2 { font-size: 16px; font-weight: 700; }
+h3 { font-size: 16px; font-weight: 400; }
+h4 { font-size: 14px; font-weight: 400; }
+
+h1, h2, h3, h4 {
+	margin: 15px 0 0 -10px;
+}
+
+p {
+	margin: 5px 0 0 0;
+}
+
+figure {
+	margin: 10px -2em;
+	padding: 10px 2em;
+	width:100%;
+	background:#e8e8e8;
+}
+
+figcaption {
+	font-size:14px;
+	font-style:italic;
+}
+
+.subtitle {
+	display:block;
+	font-size:16px;
+	font-weight:400;
+}
+
+.placeholder {
+	color:#800;
+	font-style:italic;
+}
+
+kbd {
+	display:inline-block;
+	background:#ccc;
+	color:#444;
+	font-style:normal;
+	font-weight:700;
+	border-radius:8px;
+	padding:1px 6px;
+	margin:1px;
+	border:1.5px solid #aaa;
+}
+
+code {
+	font-family: 'Anonymous Pro', monospace;
+	background: #222;
+	color:#fff;
+	border-radius:4px;
+	padding:2px 4px;
+	margin:1px;
+}
+
+code var {
+	color:#ef5;
+	font-style:italic;
+}
+
+.atag {
+	font-family: 'Calistoga', serif;
+	font-size:90%;
+	color:#000;
+	background:#e17dcd;
+
+	display:inline-block;
+	padding:1px 4px;
+	border-radius: 4px;
+	line-height:120%;
+}
+.atag:before {
+	content:'»';
+}
+.atag.extra {
+	background:#c6aff8;
+}
+.atag.creative {
+	background:linear-gradient(0.35turn, #fcacff, #f9ab93, #76a1e4, #20953d);
+}
+
+img {
+	display: block;
+	margin-left: auto;
+	margin-right: auto;
+	width: auto;
+}
+
+video {
+	display: block;
+	margin-left: auto;
+	margin-right: auto;
+	max-width: 100%;
+	height: auto;
+}
+
+.image-row {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    width: 100%;
+    margin: 20px 0;
+}
+.image-row img {
+    max-width: 50%;
+    height: auto;
+    display: block;
+}
+
+</style>
+</head>
+<body>
+<h1>F: SSAO/SSDO
+<span class="subtitle">by <span>Tao Jin (tjin2)</span></span>
+</h1>
+
+<p class="placeholder">
+Summarize, in about one paragraph, your approach to the SSAO/SSDO assignment.
+How did you structure your code?
+What's cool about it? Are there parts you weren't able to complete?
+</p>
+
+<h3>Command-line Arguments</h3>
+
+<ul>
+<li><code>--debug-view <var>mode</var></code> -- optional -- start the viewer with G-buffer debug visualization set to <code><var>mode</var></code>, where <code><var>mode</var></code> is one of <code>position</code>, <code>normal</code>, <code>albedo</code>, or <code>depth</code></li>
+</ul>
+
+<h3>Controls</h3>
+
+<ul>
+<li><kbd>V</kbd> When in debug camera mode, cycle through G-buffer debug views: None &rarr; Position &rarr; Normal &rarr; Albedo &rarr; Depth &rarr; None.</li>
+</ul>
+
+
+<h2>Deferred Rendering Pipeline</h2>
+
+<p>
+As a prerequisite for SSAO and SSDO, the renderer was converted from a forward rendering pipeline to a deferred rendering pipeline.
+In forward rendering, the fragment shader <code>objects.frag</code> evaluated full material and lighting for every fragment inline during the single main render pass.
+In deferred rendering, geometry and lighting are separated into distinct passes: a G-buffer pass writes surface attributes to off-screen textures, and a subsequent fullscreen lighting pass reads those textures to compute the final shading.
+This decoupling allows screen-space techniques like SSAO and SSDO to operate on the G-buffer between the geometry and lighting passes.
+</p>
+
+<h3>G-Buffer Layout and Resources</h3>
+
+<p>
+The G-buffer consists of three color attachments and one depth attachment, all created at swapchain resolution.
+I defined three <code>Helpers::AllocatedImage</code> members in <code>Tutorial</code> under a new <code>// SSAO/SSDO:</code> section at the end of the class in <code>Tutorial.hpp</code>: <code>gbuf_position</code> (<code>R16G16B16A16_SFLOAT</code>), <code>gbuf_normal</code> (<code>R16G16B16A16_SFLOAT</code>), and <code>gbuf_albedo</code> (<code>R8G8B8A8_UNORM</code>).
+Each has a corresponding <code>VkImageView</code>.
+A dedicated depth image <code>gbuf_depth_image</code> is created with both <code>VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT</code> and <code>VK_IMAGE_USAGE_SAMPLED_BIT</code>, so it can be written during the G-buffer pass and sampled during the lighting pass.
+This is separate from the swapchain depth image to avoid conflicts: the G-buffer pass writes depth, then the main render pass clears its own depth independently.
+</p>
+
+<p>
+The G-buffer stores surface data in world space:
+the position attachment holds world-space XYZ in RGB and the <code>material_type</code> (encoded as a float) in A;
+the normal attachment holds the TBN-mapped world-space normal in RGB and roughness in A;
+the albedo attachment holds albedo color in RGB and metalness in A.
+Storing in world space keeps all existing lighting code (IBL, direct lights, shadow PCF) working unchanged, since those computations were already performed in world space in the forward renderer.
+</p>
+
+<p>
+Resource creation and destruction are implemented in <code>SSAO/SSAO.cpp</code> as methods on <code>Tutorial</code>.
+<code>create_gbuffer_images(VkExtent2D extent)</code> allocates the three color images, the depth image, their views, the G-buffer framebuffer, and a nearest-neighbor clamp-to-edge sampler <code>gbuf_sampler</code>.
+<code>destroy_gbuffer_images()</code> tears everything down in the correct order.
+These are called from <code>on_swapchain()</code> and <code>destroy_framebuffers()</code> respectively, so the G-buffer is recreated whenever the window is resized.
+</p>
+
+<h3>G-Buffer Render Pass</h3>
+
+<p>
+I created a dedicated <code>VkRenderPass</code> called <code>gbuf_render_pass</code> in <code>create_gbuffer_render_pass()</code> within <code>SSAO/SSAO.cpp</code>.
+It has four attachments: three color attachments (position, normal, albedo) with <code>loadOp = CLEAR</code>, <code>storeOp = STORE</code>, and <code>finalLayout = SHADER_READ_ONLY_OPTIMAL</code>; and one depth attachment with <code>loadOp = CLEAR</code>, <code>storeOp = STORE</code>, and <code>finalLayout = DEPTH_STENCIL_READ_ONLY_OPTIMAL</code>.
+A subpass dependency ensures that all color and depth attachment writes complete before any fragment shader reads in subsequent passes.
+This guarantees that by the time the deferred lighting shader samples the G-buffer textures, all geometry data has been fully written.
+</p>
+
+<h3>G-Buffer Geometry Pipeline and Shaders</h3>
+
+<p>
+A new pipeline struct <code>GBufferPipeline</code> is declared in <code>Tutorial.hpp</code> and implemented in <code>SSAO/GBufferPipeline.cpp</code>.
+It uses the same vertex format (<code>PosNorTexVertex</code>) and the same descriptor set layouts for sets 0 through 7 (World UBO, Transforms SSBO, texture, cubemap, lambertian cubemap, normal map, PBR maps, PBR environment) as the forward <code>ObjectsPipeline</code>.
+It does not need sets 8&ndash;9 (lights and shadows), since lighting is deferred.
+The push constants carry <code>material_type</code> and the camera eye position, matching the forward pipeline's layout.
+The color blend state specifies three color attachments with no blending and full RGBA write masks.
+</p>
+
+<p>
+The vertex shader <code>SSAO/gbuffer.vert</code> is identical to <code>objects.vert</code>: it transforms vertices to clip space, computes world-space position and normal via <code>WORLD_FROM_LOCAL</code> and <code>WORLD_FROM_LOCAL_NORMAL</code>, and passes tangent and bitangent sign for TBN construction.
+The fragment shader <code>SSAO/gbuffer.frag</code> performs TBN normal mapping and texture sampling but no lighting.
+It writes to three output locations: <code>outPosition = vec4(worldPos, float(material_type))</code>, <code>outNormal = vec4(n, roughness)</code>, and <code>outAlbedo = vec4(albedo, metalness)</code>.
+For PBR materials (<code>material_type == 3</code>), roughness and metalness are sampled from their respective maps; otherwise they default to 1.0 and 0.0.
+</p>
+
+<h3>Deferred Lighting Pass</h3>
+
+<p>
+The deferred lighting pass is a fullscreen triangle drawn with <code>DeferredLightingPipeline</code>, implemented in <code>SSAO/DeferredLightingPipeline.cpp</code>.
+The fullscreen vertex shader <code>SSAO/fullscreen.vert</code> generates a single triangle that covers the entire screen using <code>gl_VertexIndex</code> to compute positions and texture coordinates, requiring no vertex buffer.
+The pipeline layout has seven descriptor sets: set 0 for the four G-buffer textures (position, normal, albedo, depth), set 1 for the World UBO, set 2 for the Lights SSBO, set 3 for shadow maps and the shadow UBO, and sets 4&ndash;6 for the environment cubemap, lambertian cubemap, and PBR environment (GGX cubemap + BRDF LUT).
+Push constants provide the camera eye position.
+Depth testing and writing are disabled, and back-face culling is off for the fullscreen triangle.
+</p>
+
+<p>
+The fragment shader <code>SSAO/deferred_lighting.frag</code> contains all lighting logic migrated from <code>objects.frag</code>.
+It samples the four G-buffer textures to reconstruct world-space position, normal, albedo, roughness, metalness, and material type.
+Background fragments (where the G-buffer depth is 1.0) are discarded, allowing the background pipeline's output to show through.
+The shader then branches on <code>material_type</code>: environment materials sample the cubemap using the normal; mirror materials compute a reflection vector from the eye and sample the cubemap; PBR materials evaluate the full split-sum IBL approximation (GGX prefiltered cubemap + BRDF LUT) plus per-light GGX specular with representative specular direction and area-light normalization, plus Lambert diffuse from both the irradiance cubemap and direct lights; and Lambertian materials compute diffuse irradiance from the cubemap and direct lights.
+Shadow PCF (3&times;3, 9 samples) is applied identically to the forward path.
+Tone mapping is applied at the end.
+</p>
+
+<p>
+A separate descriptor pool <code>deferred_descriptor_pool</code> and descriptor set layout <code>deferred_set0_GBuffer</code> are created in <code>create_deferred_descriptors()</code>.
+Each workspace gets a <code>DeferredWorkspace</code> with a <code>gbuffer_descriptors</code> set that binds the four G-buffer image views with the nearest-neighbor sampler.
+These descriptors are updated by <code>update_deferred_descriptors()</code> whenever the G-buffer images are recreated on swapchain resize.
+</p>
+
+<h3>Render Loop Restructuring</h3>
+
+<p>
+The render loop in <code>Tutorial::render()</code> was restructured from the original order (shadow pass &rarr; main pass with background, lines, and objects) to:
+</p>
+<ol>
+<li>Upload transforms, lights, and shadow parameters (unchanged).</li>
+<li>Shadow pass for each spot light (unchanged).</li>
+<li><b>G-Buffer pass</b>: begin <code>gbuf_render_pass</code> with <code>gbuf_framebuffer</code>, bind the <code>GBufferPipeline</code>, and draw all object instances with the same draw calls as the former objects pass. Per-instance descriptor binds (texture, normal map, PBR maps) and push constants (<code>material_type</code>, eye position) are issued exactly as before, but using <code>gbuffer_pipeline.layout</code> instead of <code>objects_pipeline.layout</code>.</li>
+<li><b>Main render pass</b>: begin the original <code>render_pass</code> with the swapchain framebuffer. Draw the background first (unchanged). Then, if <code>gbuf_debug_view != None</code>, draw a fullscreen triangle with <code>DebugGBufferPipeline</code>; otherwise draw a fullscreen triangle with <code>DeferredLightingPipeline</code>. Finally, draw lines on top (unchanged, forward pass).</li>
+</ol>
+
+<h3>G-Buffer Debug Visualization</h3>
+
+<p>
+To aid development and verification, a debug visualization system was implemented that allows inspecting individual G-buffer channels at runtime.
+An enum <code>GBufDebugView</code> with values <code>None</code>, <code>Position</code>, <code>Normal</code>, <code>Albedo</code>, <code>Depth</code>, and <code>Count</code> is declared in <code>Tutorial.hpp</code>.
+When in debug camera mode, pressing <kbd>V</kbd> cycles through these modes, printing the current mode to the console (e.g., <code>[SSAO/SSDO]: debug view = Normal</code>).
+The initial mode can also be set via the <code>--debug-view</code> command-line argument, parsed in <code>RTG::Configuration::parse()</code> and converted in the <code>Tutorial</code> constructor.
+</p>
+
+<p>
+The debug visualization pipeline <code>DebugGBufferPipeline</code> is implemented in <code>SSAO/DebugGBufferPipeline.cpp</code>.
+It uses the same fullscreen vertex shader and binds the G-buffer descriptor set at set 0.
+Push constants carry the <code>debug_mode</code> (which channel), <code>near_plane</code>, and <code>far_plane</code>.
+The fragment shader <code>SSAO/debug_gbuffer.frag</code> branches on the mode:
+position is scaled by 0.1 for visibility;
+normals are remapped from [-1, 1] to [0, 1];
+albedo is displayed directly;
+and depth is linearized using the inverse of the Vulkan perspective depth formula and mapped logarithmically for a smooth gradient.
+The far plane passed to the depth visualization is computed per-frame on the CPU as 1.5&times; the maximum distance from the eye to any object instance's world-space origin, so the gradient adapts to the actual scene extent rather than being dominated by the camera's far clip distance.
+Background pixels (depth = 1.0) are rendered as black.
+</p>
+
+<h2>SSAO</h2>
+
+<p class="placeholder">
+To be completed in Phase 2.
+</p>
+
+
+<h2>SSDO</h2>
+
+<p class="placeholder">
+To be completed in Phase 2.
+</p>
+
+
+</body>
+</html>

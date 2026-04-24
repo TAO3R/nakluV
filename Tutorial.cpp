@@ -529,6 +529,17 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		std::cout << "[Tutorial.cpp]: using culling mode: " << int(culling_mode) << std::endl;
 	}	// end of culling mode selection
 
+	{	// SSAO/SSDO: parse --debug-view CLI option
+		std::string const &dv = rtg.configuration.debug_view;
+		if (dv == "position") gbuf_debug_view = GBufDebugView::Position;
+		else if (dv == "normal") gbuf_debug_view = GBufDebugView::Normal;
+		else if (dv == "albedo") gbuf_debug_view = GBufDebugView::Albedo;
+		else if (dv == "depth") gbuf_debug_view = GBufDebugView::Depth;
+		else if (!dv.empty()) {
+			std::cerr << "[SSAO/SSDO]: Unknown --debug-view value '" << dv << "'; ignoring." << std::endl;
+		}
+	}
+
 	{	// create object vertices
 		std::vector<PosNorTexVertex> vertices;
 
@@ -811,6 +822,21 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		init_object_shadow_descriptors();
 	}
 
+	{	// SSAO/SSDO: create G-buffer render pass, pipelines, and deferred descriptor resources
+		create_gbuffer_render_pass();
+		gbuffer_pipeline.create(rtg, gbuf_render_pass, 0);
+		create_deferred_descriptors();
+		deferred_lighting_pipeline.create(rtg, render_pass, 0,
+			deferred_set0_GBuffer,
+			objects_pipeline.set0_World,
+			objects_pipeline.set8_Lights,
+			objects_pipeline.set9_Shadows,
+			objects_pipeline.set3_Cubemap,
+			objects_pipeline.set4_LambertianCubemap,
+			objects_pipeline.set7_PBREnv);
+		debug_gbuffer_pipeline.create(rtg, render_pass, 0, deferred_set0_GBuffer);
+	}
+
 	{ // create the texture descriptor pool
 		uint32_t per_texture = uint32_t(textures.size());
 		uint32_t per_normal_map = uint32_t(normal_map_textures.size());
@@ -1054,6 +1080,28 @@ Tutorial::~Tutorial() {
 	//(not using VK macro to avoid throw-ing in destructor)
 	if (VkResult result = vkDeviceWaitIdle(rtg.device); result != VK_SUCCESS) {
 		std::cerr << "Failed to vkDeviceWaitIdle in Tutorial::~Tutorial [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
+	}
+
+	// SSAO/SSDO: cleanup
+	debug_gbuffer_pipeline.destroy(rtg);
+	deferred_lighting_pipeline.destroy(rtg);
+	gbuffer_pipeline.destroy(rtg);
+	if (deferred_descriptor_pool != VK_NULL_HANDLE) {
+		vkDestroyDescriptorPool(rtg.device, deferred_descriptor_pool, nullptr);
+		deferred_descriptor_pool = VK_NULL_HANDLE;
+	}
+	if (deferred_set0_GBuffer != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, deferred_set0_GBuffer, nullptr);
+		deferred_set0_GBuffer = VK_NULL_HANDLE;
+	}
+	if (gbuf_sampler != VK_NULL_HANDLE) {
+		vkDestroySampler(rtg.device, gbuf_sampler, nullptr);
+		gbuf_sampler = VK_NULL_HANDLE;
+	}
+	destroy_gbuffer_images();
+	if (gbuf_render_pass != VK_NULL_HANDLE) {
+		vkDestroyRenderPass(rtg.device, gbuf_render_pass, nullptr);
+		gbuf_render_pass = VK_NULL_HANDLE;
 	}
 
 	// A3-shadow: cleanup
@@ -1315,10 +1363,17 @@ void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 		VK(vkCreateFramebuffer(rtg.device, &create_info, nullptr, &swapchain_framebuffers[i]));
 	}
 
+	// SSAO/SSDO: create G-buffer images at swapchain resolution
+	create_gbuffer_images(swapchain.extent);
+	for (uint32_t i = 0; i < uint32_t(deferred_workspaces.size()); ++i) {
+		update_deferred_descriptors(i);
+	}
 }
 
 void Tutorial::destroy_framebuffers() {
 	// refsol::Tutorial_destroy_framebuffers(rtg, &swapchain_depth_image, &swapchain_depth_image_view, &swapchain_framebuffers);
+	destroy_gbuffer_images();
+
 	for (VkFramebuffer &framebuffer : swapchain_framebuffers) {
 		assert(framebuffer != VK_NULL_HANDLE);
 		vkDestroyFramebuffer(rtg.device, framebuffer, nullptr);
@@ -1638,230 +1693,176 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		}
 	}
 
-	// GPU commands
-	{	// render pass
+	// ── G-BUFFER PASS ──────────────────────────────────────────
+	if (!object_instances.empty()) {
+		std::array<VkClearValue, 4> gbuf_clear{
+			VkClearValue{.color{.float32{0.0f, 0.0f, 0.0f, 0.0f}}},
+			VkClearValue{.color{.float32{0.0f, 0.0f, 0.0f, 0.0f}}},
+			VkClearValue{.color{.float32{0.0f, 0.0f, 0.0f, 0.0f}}},
+			VkClearValue{.depthStencil{.depth = 1.0f, .stencil = 0}},
+		};
+
+		VkRenderPassBeginInfo gbuf_begin{
+			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+			.renderPass = gbuf_render_pass,
+			.framebuffer = gbuf_framebuffer,
+			.renderArea{.offset = {0, 0}, .extent = rtg.swapchain_extent},
+			.clearValueCount = uint32_t(gbuf_clear.size()),
+			.pClearValues = gbuf_clear.data(),
+		};
+
+		vkCmdBeginRenderPass(workspace.command_buffer, &gbuf_begin, VK_SUBPASS_CONTENTS_INLINE);
+
+		{
+			VkRect2D scissor{.offset = {0, 0}, .extent = rtg.swapchain_extent};
+			vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			VkViewport viewport{.x = 0.0f, .y = 0.0f, .width = float(rtg.swapchain_extent.width), .height = float(rtg.swapchain_extent.height), .minDepth = 0.0f, .maxDepth = 1.0f};
+			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
+		}
+
+		vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline.handle);
+
+		{
+			VkBuffer vb = (scene_vertices.handle != VK_NULL_HANDLE) ? scene_vertices.handle : object_vertices.handle;
+			std::array<VkBuffer, 1> vertex_buffers{vb};
+			std::array<VkDeviceSize, 1> offsets{0};
+			vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+		}
+
+		{
+			std::array<VkDescriptorSet, 2> descriptor_sets{
+				workspace.World_descriptors,
+				workspace.Transforms_descriptors,
+			};
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline.layout, 0, uint32_t(descriptor_sets.size()), descriptor_sets.data(), 0, nullptr);
+		}
+
+		{
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline.layout, 3, 1, &environment_cubemap_descriptors, 0, nullptr);
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline.layout, 4, 1, &lambertian_cubemap_descriptors, 0, nullptr);
+		}
+
+		for (ObjectInstance const &inst : object_instances) {
+			uint32_t index = uint32_t(&inst - &object_instances[0]);
+
+			if (inst.texture < uint32_t(texture_descriptors.size())) {
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline.layout, 2, 1, &texture_descriptors[inst.texture], 0, nullptr);
+			}
+			if (inst.normal_map_texture < uint32_t(normal_map_descriptors.size())) {
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline.layout, 5, 1, &normal_map_descriptors[inst.normal_map_texture], 0, nullptr);
+			}
+			if (inst.pbr_map_descriptor < uint32_t(pbr_map_descriptors.size())) {
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline.layout, 6, 1, &pbr_map_descriptors[inst.pbr_map_descriptor], 0, nullptr);
+			}
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline.layout, 7, 1, &pbr_env_descriptors, 0, nullptr);
+
+			GBufferPipeline::Push push{
+				.material_type = static_cast<uint32_t>(inst.material_type),
+				.eye_x = eye_x,
+				.eye_y = eye_y,
+				.eye_z = eye_z,
+			};
+			vkCmdPushConstants(workspace.command_buffer, gbuffer_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+
+			vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
+		}
+
+		vkCmdEndRenderPass(workspace.command_buffer);
+	}
+
+	// ── MAIN RENDER PASS (background + deferred lighting/debug + lines) ──
+	{
 		std::array<VkClearValue, 2> clear_values{
-			VkClearValue{.color{.float32{0.1768f, 0.3636f, 0.0231f, 1.0f}}},		// color buffer, already powered by 2.2 from sRGB to linear
-			VkClearValue{.depthStencil{.depth = 1.0f, .stencil = 0}},				// depth buffer
+			VkClearValue{.color{.float32{0.1768f, 0.3636f, 0.0231f, 1.0f}}},
+			VkClearValue{.depthStencil{.depth = 1.0f, .stencil = 0}},
 		};
 
 		VkRenderPassBeginInfo begin_info{
 			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 			.renderPass = render_pass,
-			.framebuffer = framebuffer,				// specific image reference to render to
-			.renderArea{							// the pixel area that will be rendered to
-				.offset = {.x = 0, .y = 0},
-				.extent = rtg.swapchain_extent,		// current size of the swapchain, whole size of the image being rendered
-			},
+			.framebuffer = framebuffer,
+			.renderArea{.offset = {0, 0}, .extent = rtg.swapchain_extent},
 			.clearValueCount = uint32_t(clear_values.size()),
-			.pClearValues = clear_values.data(),	// "loaded" by being cleared to a constant value
+			.pClearValues = clear_values.data(),
 		};
 
 		vkCmdBeginRenderPass(workspace.command_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
 
-		// run pipeline
-		{	// set scissor rectangle (the subset of the screen that gets drawn to):
-			VkRect2D scissor{
-				.offset = {.x = 0, .y = 0},
-				.extent = rtg.swapchain_extent,
-			};
-			vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);	// State commands
+		{
+			VkRect2D scissor{.offset = {0, 0}, .extent = rtg.swapchain_extent};
+			vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			VkViewport viewport{.x = 0.0f, .y = 0.0f, .width = float(rtg.swapchain_extent.width), .height = float(rtg.swapchain_extent.height), .minDepth = 0.0f, .maxDepth = 1.0f};
+			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
 		}
-		{	// configure viewport transform (how device coordinates map to window coordinates):
-			VkViewport viewport{
-				.x = 0.0f,
-				.y = 0.0f,
-				.width = float(rtg.swapchain_extent.width),
-				.height = float(rtg.swapchain_extent.height),
-				.minDepth = 0.0f,
-				.maxDepth = 1.0f,
-			};
-			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);	// State commands
-		}
-		// the above two settings make sure that our pipeline's output will exactly cover the swapchain image getting rendered to
 
-		{	// draw with the background pipeline:
-
-			// any subsequent draw commands should use our freshly created background pipeline
-			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, background_pipeline.handle);	// State commands
-
-			{	// push time:
-				BackgroundPipeline::Push push{
-					.time = time,
-				};
-				vkCmdPushConstants(workspace.command_buffer, background_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
-			}
-
-			// Action command, uses parameters set by state commands, runs the pipeline for - reading the parameters -
-			// 3 vertices and 1 instance, starting at vertex 0 and instance 0 - draws exactly one triangle
+		{	// draw background
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, background_pipeline.handle);
+			BackgroundPipeline::Push push{.time = time};
+			vkCmdPushConstants(workspace.command_buffer, background_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
 			vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
 		}
 
-		if (!lines_vertices.empty() && workspace.lines_vertices.handle != VK_NULL_HANDLE)
-		{	// draw with the lines pipeline:
-			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lines_pipeline.handle);
+		if (!object_instances.empty() && gbuf_framebuffer != VK_NULL_HANDLE) {
+			auto &dw = deferred_workspaces[render_params.workspace_index];
 
-			{	// use workspace.lines_vertices (offset 0) as vertex buffer binding 0:
-				std::array<VkBuffer, 1 > vertex_buffers{workspace.lines_vertices.handle};
-				std::array<VkDeviceSize, 1 > offsets{0};
-				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
-			}
-			
-			{	// bind Camera descriptor set:
-				std::array<VkDescriptorSet, 1> descriptor_sets{
-					workspace.Camera_descriptors,	// 0: Camera
+			if (gbuf_debug_view != GBufDebugView::None) {
+				// debug visualization
+				vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, debug_gbuffer_pipeline.handle);
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, debug_gbuffer_pipeline.layout, 0, 1, &dw.gbuffer_descriptors, 0, nullptr);
+				float cam_near = 0.1f;
+				if (camera_mode == CameraMode::Scene && !scene_cameras.empty()) {
+					cam_near = std::get<S72::Camera::Perspective>(scene_cameras[scene_camera_index].camera->projection).near;
+				} else if (camera_mode == CameraMode::Debug) { cam_near = debug_camera.near; }
+				else if (camera_mode == CameraMode::User) { cam_near = free_camera.near; }
+
+				float max_dist = cam_near;
+				for (auto const &inst : object_instances) {
+					float ox = inst.transform.WORLD_FROM_LOCAL[12];
+					float oy = inst.transform.WORLD_FROM_LOCAL[13];
+					float oz = inst.transform.WORLD_FROM_LOCAL[14];
+					float dx = ox - eye_x, dy = oy - eye_y, dz = oz - eye_z;
+					float d = std::sqrt(dx*dx + dy*dy + dz*dz);
+					if (d > max_dist) max_dist = d;
+				}
+				float scene_far = max_dist * 1.5f;
+
+				DebugGBufferPipeline::Push dbg_push{
+					.debug_mode = static_cast<uint32_t>(gbuf_debug_view),
+					.near_plane = cam_near,
+					.far_plane = scene_far,
 				};
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,	// command buffer
-					VK_PIPELINE_BIND_POINT_GRAPHICS,	// pipeline bind point
-					lines_pipeline.layout,	// pipeline layout
-					0,	// first set
-					uint32_t(descriptor_sets.size()), descriptor_sets.data(),	// descriptor sets count, ptr
-					0, nullptr	// dynamic offsets count, ptr
-				);
-			}
+				vkCmdPushConstants(workspace.command_buffer, debug_gbuffer_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(dbg_push), &dbg_push);
+				vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
+			} else {
+				// deferred lighting fullscreen pass
+				vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, deferred_lighting_pipeline.handle);
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, deferred_lighting_pipeline.layout, 0, 1, &dw.gbuffer_descriptors, 0, nullptr);
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, deferred_lighting_pipeline.layout, 1, 1, &workspace.World_descriptors, 0, nullptr);
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, deferred_lighting_pipeline.layout, 2, 1, &workspace.Lights_descriptors, 0, nullptr);
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, deferred_lighting_pipeline.layout, 3, 1, &workspace.Shadow_descriptors, 0, nullptr);
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, deferred_lighting_pipeline.layout, 4, 1, &environment_cubemap_descriptors, 0, nullptr);
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, deferred_lighting_pipeline.layout, 5, 1, &lambertian_cubemap_descriptors, 0, nullptr);
+				vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, deferred_lighting_pipeline.layout, 6, 1, &pbr_env_descriptors, 0, nullptr);
 
-			// draw lines vertices
-			vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
-		}
-
-		if (!object_instances.empty())
-		{	// draw with the objects pipeline:
-			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
-
-			{	// A1: bind the appropriate vertex buffer:
-				// if a scene was loaded, use scene_vertices; otherwise use the hardcoded object_vertices
-				VkBuffer vb = (scene_vertices.handle != VK_NULL_HANDLE) ? scene_vertices.handle : object_vertices.handle;
-				std::array<VkBuffer, 1> vertex_buffers{vb};
-				std::array<VkDeviceSize, 1> offsets{0};
-				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
-			}
-
-			{ // bind World and Transforms descriptor set:
-				std::array< VkDescriptorSet, 2 > descriptor_sets{
-					workspace.World_descriptors,	// 0: World
-					workspace.Transforms_descriptors, // 1: Transforms
-				};
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,	// command buffer
-					VK_PIPELINE_BIND_POINT_GRAPHICS,	// pipeline bind point
-					objects_pipeline.layout,	// pipeline layout
-					0,	// first set
-					uint32_t(descriptor_sets.size()), descriptor_sets.data(),	// descriptor sets count, ptr
-					0, nullptr	// dynamic offsets count, ptr
-				);
-			}
-
-			{	// A3-lights: bind lights SSBO (set 8), shared for all object instances
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,
-					VK_PIPELINE_BIND_POINT_GRAPHICS,
-					objects_pipeline.layout,
-					8,
-					1,
-					&workspace.Lights_descriptors,
-					0, nullptr
-				);
-			}
-
-			{	// A3-shadow: PCF shadow maps + clip matrices (set 9; init_object_shadow_descriptors always allocs)
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,
-					VK_PIPELINE_BIND_POINT_GRAPHICS,
-					objects_pipeline.layout,
-					9,
-					1,
-					&workspace.Shadow_descriptors,
-					0, nullptr
-				);
-			}
-
-			{	// A2-env: bind cubemap descriptor set (always; fallback black if no env)
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,
-					VK_PIPELINE_BIND_POINT_GRAPHICS,
-					objects_pipeline.layout,
-					3, 1, &environment_cubemap_descriptors,
-					0, nullptr
-				);
-			}
-
-			{	// A2-diffuse: bind lambertian cubemap descriptor set (always; fallback black if no env)
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,
-					VK_PIPELINE_BIND_POINT_GRAPHICS,
-					objects_pipeline.layout,
-					4, 1, &lambertian_cubemap_descriptors,
-					0, nullptr
-				);
-			}
-		
-			// draw all instances:
-			for (ObjectInstance const &inst : object_instances) {
-				uint32_t index = uint32_t(&inst - &object_instances[0]);
-
-				if (inst.texture < uint32_t(texture_descriptors.size())) {
-					vkCmdBindDescriptorSets(
-						workspace.command_buffer,
-						VK_PIPELINE_BIND_POINT_GRAPHICS,
-						objects_pipeline.layout,
-						2,
-						1, &texture_descriptors[inst.texture],
-						0, nullptr
-					);
-				}
-
-				// A2-normal: bind normal map descriptor set
-				if (inst.normal_map_texture < uint32_t(normal_map_descriptors.size())) {
-					vkCmdBindDescriptorSets(
-						workspace.command_buffer,
-						VK_PIPELINE_BIND_POINT_GRAPHICS,
-						objects_pipeline.layout,
-						5,
-						1, &normal_map_descriptors[inst.normal_map_texture],
-						0, nullptr
-					);
-				}
-
-				// A2-pbr: bind per-material PBR maps (set6) and environment (set7)
-				if (inst.pbr_map_descriptor < uint32_t(pbr_map_descriptors.size())) {
-					vkCmdBindDescriptorSets(
-						workspace.command_buffer,
-						VK_PIPELINE_BIND_POINT_GRAPHICS,
-						objects_pipeline.layout,
-						6,
-						1, &pbr_map_descriptors[inst.pbr_map_descriptor],
-						0, nullptr
-					);
-				}
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,
-					VK_PIPELINE_BIND_POINT_GRAPHICS,
-					objects_pipeline.layout,
-					7,
-					1, &pbr_env_descriptors,
-					0, nullptr
-				);
-
-				// A2-env: push `material_type` and camera eye position constants
-				ObjectsPipeline::Push push{
-					.material_type = static_cast<uint32_t>(inst.material_type),
+				DeferredLightingPipeline::Push lit_push{
 					.eye_x = eye_x,
 					.eye_y = eye_y,
 					.eye_z = eye_z,
 				};
-				vkCmdPushConstants(
-					workspace.command_buffer,
-					objects_pipeline.layout,
-					VK_SHADER_STAGE_FRAGMENT_BIT,
-					0, sizeof(push), &push
-				);
-
-				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
+				vkCmdPushConstants(workspace.command_buffer, deferred_lighting_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(lit_push), &lit_push);
+				vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
 			}
+		}
 
-			// std::cout << "[Tutorial.cpp]: Number of object instances to draw: " << object_instances.size() << std::endl;
-		}	// end of draw with objects pipeline
+		if (!lines_vertices.empty() && workspace.lines_vertices.handle != VK_NULL_HANDLE) {
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lines_pipeline.handle);
+			std::array<VkBuffer, 1> vertex_buffers{workspace.lines_vertices.handle};
+			std::array<VkDeviceSize, 1> offsets{0};
+			vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+			std::array<VkDescriptorSet, 1> descriptor_sets{workspace.Camera_descriptors};
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lines_pipeline.layout, 0, uint32_t(descriptor_sets.size()), descriptor_sets.data(), 0, nullptr);
+			vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
+		}
 
 		vkCmdEndRenderPass(workspace.command_buffer);
 	}
@@ -2540,7 +2541,13 @@ void Tutorial::on_input(InputEvent const &evt) {
 			{
 				anim_time = 0.0f;
 				std::cout << "[Tutorial.cpp]: replay the animation." << std::endl;
-                        			}
+			}
+			else if (evt.key.key == GLFW_KEY_V)
+			{
+				gbuf_debug_view = GBufDebugView((uint32_t(gbuf_debug_view) + 1) % uint32_t(GBufDebugView::Count));
+				static const char *names[] = {"None", "Position", "Normal", "Albedo", "Depth"};
+				std::cout << "[SSAO/SSDO]: debug view = " << names[uint32_t(gbuf_debug_view)] << std::endl;
+			}
 			return;
 		}
 	}	// end of debug camera input handling

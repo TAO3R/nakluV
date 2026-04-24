@@ -74,6 +74,10 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			if (argi + 1 >= argc) throw std::runtime_error("--tone-map requires a parameter (linear, reinhard, ...).");
 			argi += 1;
 			tone_map = argv[argi];
+		} else if (arg == "--debug-view") {
+			if (argi + 1 >= argc) throw std::runtime_error("--debug-view requires a parameter (position, normal, albedo, depth).");
+			argi += 1;
+			debug_view = argv[argi];
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}
@@ -85,6 +89,7 @@ void RTG::Configuration::usage(std::function< void(const char *, const char *) >
 	callback("--physical-device <name>", "Run on the named physical device (guesses, otherwise).");
 	callback("--drawing-size <w> <h>", "Set the size of the surface to draw to.");
 	callback("--headless", "Don't create a window; read events from stdin.");
+	callback("--debug-view <mode>", "Start with G-buffer debug view (position, normal, albedo, depth).");
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
