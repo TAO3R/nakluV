@@ -1,11 +1,12 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
-// set 0: G-buffer textures
+// set 0: G-buffer textures + SSAO
 layout(set = 0, binding = 0) uniform sampler2D gPosition;
 layout(set = 0, binding = 1) uniform sampler2D gNormal;
 layout(set = 0, binding = 2) uniform sampler2D gAlbedo;
 layout(set = 0, binding = 3) uniform sampler2D gDepth;
+layout(set = 0, binding = 4) uniform sampler2D gSSAO;
 
 // set 1: World UBO (same as objects.frag set 0)
 layout(set = 1, binding = 0, std140) uniform World {
@@ -283,15 +284,16 @@ void main() {
     }
 
     vec3 eye = vec3(eye_x, eye_y, eye_z);
+    float ao = texture(gSSAO, texCoord).r;
     vec3 radiance;
 
     if (material_type == 1u) {
-        radiance = texture(CUBEMAP, n).rgb;
+        radiance = texture(CUBEMAP, n).rgb * ao;
     }
     else if (material_type == 2u) {
         vec3 view_dir = normalize(worldPos - eye);
         vec3 refl = reflect(view_dir, n);
-        radiance = texture(CUBEMAP, refl).rgb;
+        radiance = texture(CUBEMAP, refl).rgb * ao;
     }
     else if (material_type == 3u) {
         vec3 F0 = mix(vec3(0.04), albedo, metalness);
@@ -301,7 +303,7 @@ void main() {
 
         vec3 prefilteredColor = textureLod(GGX_CUBEMAP, R, roughness * ggx_max_lod).rgb;
         vec2 envBRDF = texture(BRDF_LUT, vec2(NdotV, roughness)).rg;
-        vec3 specularIbl = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+        vec3 specularIbl = prefilteredColor * (F0 * envBRDF.x + envBRDF.y) * ao;
         vec3 specularDirect = evalSpecularDirectLightsPBR(n, V, roughness, F0, NdotV, worldPos);
         vec3 specular = specularIbl + specularDirect;
 
@@ -316,7 +318,7 @@ void main() {
                 + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
         }
         vec3 irradianceDirect = evalDiffuseDirectLights(n, worldPos);
-        vec3 irradiance = irradianceIbl + irradianceDirect;
+        vec3 irradiance = irradianceIbl * ao + irradianceDirect;
         vec3 diffuse = kD * albedo * irradiance;
 
         radiance = diffuse + specular;
@@ -330,7 +332,7 @@ void main() {
                 + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
         }
         vec3 irradianceDirect = evalDiffuseDirectLights(n, worldPos);
-        vec3 irradiance = irradianceIbl + irradianceDirect;
+        vec3 irradiance = irradianceIbl * ao + irradianceDirect;
 
         radiance = irradiance * albedo;
     }

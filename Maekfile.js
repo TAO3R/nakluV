@@ -95,6 +95,19 @@ main_objs.push( maek.CPP('SSAO/DebugGBufferPipeline.cpp', undefined, { depends:[
 
 main_objs.push( maek.CPP('SSAO/SSAO.cpp') );
 
+// SSAO: hemisphere sampling and blur passes
+const ssao_shaders = [
+	fullscreen_vert,
+	maek.GLSLC('SSAO/ssao.frag'),
+];
+main_objs.push( maek.CPP('SSAO/SSAOPipeline.cpp', undefined, { depends:[...ssao_shaders] } ) );
+
+const ssao_blur_shaders = [
+	fullscreen_vert,
+	maek.GLSLC('SSAO/ssao_blur.frag'),
+];
+main_objs.push( maek.CPP('SSAO/SSAOBlurPipeline.cpp', undefined, { depends:[...ssao_blur_shaders] } ) );
+
 // const prebuilt_objs = [ ];
 
 //use the prebuilt refsol.o unless refsol.cpp exists:

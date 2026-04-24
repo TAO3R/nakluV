@@ -74,11 +74,16 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			if (argi + 1 >= argc) throw std::runtime_error("--tone-map requires a parameter (linear, reinhard, ...).");
 			argi += 1;
 			tone_map = argv[argi];
-		} else if (arg == "--debug-view") {
-			if (argi + 1 >= argc) throw std::runtime_error("--debug-view requires a parameter (position, normal, albedo, depth).");
-			argi += 1;
-			debug_view = argv[argi];
-		} else {
+	} else if (arg == "--debug-view") {
+		if (argi + 1 >= argc) throw std::runtime_error("--debug-view requires a parameter (position, normal, albedo, depth).");
+		argi += 1;
+		debug_view = argv[argi];
+	} else if (arg == "--ssao-samples") {
+		if (argi + 1 >= argc) throw std::runtime_error("--ssao-samples requires a parameter (1..64).");
+		argi += 1;
+		int val = std::stoi(argv[argi]);
+		ssao_samples = uint32_t(std::max(1, std::min(val, 64)));
+	} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}
 	}
@@ -90,6 +95,7 @@ void RTG::Configuration::usage(std::function< void(const char *, const char *) >
 	callback("--drawing-size <w> <h>", "Set the size of the surface to draw to.");
 	callback("--headless", "Don't create a window; read events from stdin.");
 	callback("--debug-view <mode>", "Start with G-buffer debug view (position, normal, albedo, depth).");
+	callback("--ssao-samples <N>", "SSAO hemisphere sample count (1..64, default 32).");
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(

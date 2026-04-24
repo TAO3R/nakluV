@@ -4,6 +4,7 @@ layout(set = 0, binding = 0) uniform sampler2D gPosition;
 layout(set = 0, binding = 1) uniform sampler2D gNormal;
 layout(set = 0, binding = 2) uniform sampler2D gAlbedo;
 layout(set = 0, binding = 3) uniform sampler2D gDepth;
+layout(set = 0, binding = 4) uniform sampler2D gSSAO;
 
 layout(push_constant) uniform PushConstants {
     uint debug_mode;
@@ -40,6 +41,10 @@ void main() {
             float vis = (log(lin) - log(near_plane)) / (log(far_plane) - log(near_plane));
             outColor = vec4(vec3(1.0 - clamp(vis, 0.0, 1.0)), 1.0);
         }
+    }
+    else if (debug_mode == 5u) {
+        float ao = texture(gSSAO, texCoord).r;
+        outColor = vec4(vec3(ao), 1.0);
     }
     else {
         outColor = vec4(0.0, 0.0, 0.0, 1.0);

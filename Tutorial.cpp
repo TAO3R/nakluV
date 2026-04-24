@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <random>
 
 // Constructor
 Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
@@ -535,9 +536,13 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		else if (dv == "normal") gbuf_debug_view = GBufDebugView::Normal;
 		else if (dv == "albedo") gbuf_debug_view = GBufDebugView::Albedo;
 		else if (dv == "depth") gbuf_debug_view = GBufDebugView::Depth;
+		else if (dv == "ssao") gbuf_debug_view = GBufDebugView::SSAO;
 		else if (!dv.empty()) {
 			std::cerr << "[SSAO/SSDO]: Unknown --debug-view value '" << dv << "'; ignoring." << std::endl;
 		}
+
+		ssao_sample_count = rtg.configuration.ssao_samples;
+		std::cout << "[SSAO]: sample count = " << ssao_sample_count << std::endl;
 	}
 
 	{	// create object vertices
@@ -837,6 +842,17 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		debug_gbuffer_pipeline.create(rtg, render_pass, 0, deferred_set0_GBuffer);
 	}
 
+	{	// SSAO: kernel, noise texture, render pass, pipelines, descriptors
+		generate_ssao_kernel();
+		create_ssao_noise_texture();
+		create_ssao_render_pass();
+		create_ssao_descriptors();
+		ssao_pipeline.create(rtg, ssao_render_pass, 0,
+			deferred_set0_GBuffer, ssao_params_set_layout, ssao_noise_set_layout);
+		ssao_blur_pipeline.create(rtg, ssao_render_pass, 0,
+			ssao_blur_input_set_layout);
+	}
+
 	{ // create the texture descriptor pool
 		uint32_t per_texture = uint32_t(textures.size());
 		uint32_t per_normal_map = uint32_t(normal_map_textures.size());
@@ -1080,6 +1096,47 @@ Tutorial::~Tutorial() {
 	//(not using VK macro to avoid throw-ing in destructor)
 	if (VkResult result = vkDeviceWaitIdle(rtg.device); result != VK_SUCCESS) {
 		std::cerr << "Failed to vkDeviceWaitIdle in Tutorial::~Tutorial [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
+	}
+
+	// SSAO: cleanup
+	ssao_blur_pipeline.destroy(rtg);
+	ssao_pipeline.destroy(rtg);
+	for (auto &sw : ssao_workspaces) {
+		if (sw.ssao_params_src.handle) rtg.helpers.destroy_buffer(std::move(sw.ssao_params_src));
+		if (sw.ssao_params.handle) rtg.helpers.destroy_buffer(std::move(sw.ssao_params));
+	}
+	ssao_workspaces.clear();
+	if (ssao_descriptor_pool != VK_NULL_HANDLE) {
+		vkDestroyDescriptorPool(rtg.device, ssao_descriptor_pool, nullptr);
+		ssao_descriptor_pool = VK_NULL_HANDLE;
+	}
+	if (ssao_params_set_layout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, ssao_params_set_layout, nullptr);
+		ssao_params_set_layout = VK_NULL_HANDLE;
+	}
+	if (ssao_noise_set_layout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, ssao_noise_set_layout, nullptr);
+		ssao_noise_set_layout = VK_NULL_HANDLE;
+	}
+	if (ssao_blur_input_set_layout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(rtg.device, ssao_blur_input_set_layout, nullptr);
+		ssao_blur_input_set_layout = VK_NULL_HANDLE;
+	}
+	destroy_ssao_images();
+	if (ssao_render_pass != VK_NULL_HANDLE) {
+		vkDestroyRenderPass(rtg.device, ssao_render_pass, nullptr);
+		ssao_render_pass = VK_NULL_HANDLE;
+	}
+	if (ssao_noise_view != VK_NULL_HANDLE) {
+		vkDestroyImageView(rtg.device, ssao_noise_view, nullptr);
+		ssao_noise_view = VK_NULL_HANDLE;
+	}
+	if (ssao_noise_sampler != VK_NULL_HANDLE) {
+		vkDestroySampler(rtg.device, ssao_noise_sampler, nullptr);
+		ssao_noise_sampler = VK_NULL_HANDLE;
+	}
+	if (ssao_noise_image.handle != VK_NULL_HANDLE) {
+		rtg.helpers.destroy_image(std::move(ssao_noise_image));
 	}
 
 	// SSAO/SSDO: cleanup
@@ -1365,13 +1422,16 @@ void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 
 	// SSAO/SSDO: create G-buffer images at swapchain resolution
 	create_gbuffer_images(swapchain.extent);
+	create_ssao_images(swapchain.extent);
 	for (uint32_t i = 0; i < uint32_t(deferred_workspaces.size()); ++i) {
 		update_deferred_descriptors(i);
+		update_ssao_descriptors(i);
 	}
 }
 
 void Tutorial::destroy_framebuffers() {
 	// refsol::Tutorial_destroy_framebuffers(rtg, &swapchain_depth_image, &swapchain_depth_image_view, &swapchain_framebuffers);
+	destroy_ssao_images();
 	destroy_gbuffer_images();
 
 	for (VkFramebuffer &framebuffer : swapchain_framebuffers) {
@@ -1770,6 +1830,87 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		vkCmdEndRenderPass(workspace.command_buffer);
 	}
 
+	// ── SSAO PASS ──
+	if (ssao_framebuffer != VK_NULL_HANDLE && ssao_pipeline.handle != VK_NULL_HANDLE) {
+		auto &sw = ssao_workspaces[render_params.workspace_index];
+
+		{
+			SSAOParams params{};
+			std::memcpy(params.VIEW_FROM_WORLD, VIEW_FROM_WORLD.data(), 64);
+			std::memcpy(params.CLIP_FROM_VIEW, CLIP_FROM_VIEW.data(), 64);
+			std::memcpy(params.samples, ssao_kernel, sizeof(ssao_kernel));
+			params.noise_scale_x = float(rtg.swapchain_extent.width) / 4.0f;
+			params.noise_scale_y = float(rtg.swapchain_extent.height) / 4.0f;
+			params.radius = 0.5f;
+			params.bias = 0.025f;
+			params.sample_count = ssao_sample_count;
+
+			std::memcpy(sw.ssao_params_src.allocation.data(), &params, sizeof(params));
+			VkBufferCopy copy{.srcOffset = 0, .dstOffset = 0, .size = sizeof(params)};
+			vkCmdCopyBuffer(workspace.command_buffer, sw.ssao_params_src.handle, sw.ssao_params.handle, 1, &copy);
+
+			VkMemoryBarrier barrier{
+				.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+				.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+				.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT,
+			};
+			vkCmdPipelineBarrier(workspace.command_buffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				0, 1, &barrier, 0, nullptr, 0, nullptr);
+		}
+
+		{
+			VkClearValue clear{.color{.float32{1.0f, 1.0f, 1.0f, 1.0f}}};
+			VkRenderPassBeginInfo begin{
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = ssao_render_pass,
+				.framebuffer = ssao_framebuffer,
+				.renderArea{.offset = {0, 0}, .extent = rtg.swapchain_extent},
+				.clearValueCount = 1, .pClearValues = &clear,
+			};
+			vkCmdBeginRenderPass(workspace.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
+
+			VkRect2D scissor{.offset = {0, 0}, .extent = rtg.swapchain_extent};
+			vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			VkViewport viewport{.x = 0.0f, .y = 0.0f, .width = float(rtg.swapchain_extent.width), .height = float(rtg.swapchain_extent.height), .minDepth = 0.0f, .maxDepth = 1.0f};
+			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
+
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_pipeline.handle);
+
+			auto &dw = deferred_workspaces[render_params.workspace_index];
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_pipeline.layout, 0, 1, &dw.gbuffer_descriptors, 0, nullptr);
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_pipeline.layout, 1, 1, &sw.ssao_params_descriptors, 0, nullptr);
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_pipeline.layout, 2, 1, &ssao_noise_descriptors, 0, nullptr);
+
+			vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
+			vkCmdEndRenderPass(workspace.command_buffer);
+		}
+
+		// ── SSAO BLUR PASS ──
+		{
+			VkClearValue clear{.color{.float32{1.0f, 1.0f, 1.0f, 1.0f}}};
+			VkRenderPassBeginInfo begin{
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = ssao_render_pass,
+				.framebuffer = ssao_blur_framebuffer,
+				.renderArea{.offset = {0, 0}, .extent = rtg.swapchain_extent},
+				.clearValueCount = 1, .pClearValues = &clear,
+			};
+			vkCmdBeginRenderPass(workspace.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
+
+			VkRect2D scissor{.offset = {0, 0}, .extent = rtg.swapchain_extent};
+			vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			VkViewport viewport{.x = 0.0f, .y = 0.0f, .width = float(rtg.swapchain_extent.width), .height = float(rtg.swapchain_extent.height), .minDepth = 0.0f, .maxDepth = 1.0f};
+			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
+
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_blur_pipeline.handle);
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_blur_pipeline.layout, 0, 1, &sw.ssao_raw_descriptors, 0, nullptr);
+
+			vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
+			vkCmdEndRenderPass(workspace.command_buffer);
+		}
+	}
+
 	// ── MAIN RENDER PASS (background + deferred lighting/debug + lines) ──
 	{
 		std::array<VkClearValue, 2> clear_values{
@@ -1923,36 +2064,27 @@ void Tutorial::update(float dt) {
 
 	{	// handle camera mode
 		if (camera_mode == CameraMode::Scene) {	// SCENE
-			//  current scene camera
 			auto& sc = scene_cameras[scene_camera_index];
-			//  scene camera's S72::Camera::Perspective params
 			auto& persp = std::get<S72::Camera::Perspective>(sc.camera->projection);
-			CLIP_FROM_WORLD = perspective(
-				persp.vfov,
-				rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// window aspect
-				persp.near,
-				persp.far
-			) * mat4_inverse(sc.WORLD_FROM_CAMERA);
+			float aspect = rtg.swapchain_extent.width / float(rtg.swapchain_extent.height);
+			VIEW_FROM_WORLD = mat4_inverse(sc.WORLD_FROM_CAMERA);
+			CLIP_FROM_VIEW = perspective(persp.vfov, aspect, persp.near, persp.far);
+			CLIP_FROM_WORLD = CLIP_FROM_VIEW * VIEW_FROM_WORLD;
 
-			// A2-env: extract eye position from the camera's world transform (column-major, translation is column 3)
 			eye_x = sc.WORLD_FROM_CAMERA[12];
 			eye_y = sc.WORLD_FROM_CAMERA[13];
 			eye_z = sc.WORLD_FROM_CAMERA[14];
 
-			// set culling matrix
 			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
 		} else if (camera_mode == CameraMode::User) {	// USER
-			CLIP_FROM_WORLD = perspective(
-				free_camera.fov,
-				rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// window aspect
-				free_camera.near,
-				free_camera.far
-			) * orbit(
+			float aspect = rtg.swapchain_extent.width / float(rtg.swapchain_extent.height);
+			VIEW_FROM_WORLD = orbit(
 				free_camera.target_x, free_camera.target_y, free_camera.target_z,
 				free_camera.azimuth, free_camera.elevation, free_camera.radius
 			);
+			CLIP_FROM_VIEW = perspective(free_camera.fov, aspect, free_camera.near, free_camera.far);
+			CLIP_FROM_WORLD = CLIP_FROM_VIEW * VIEW_FROM_WORLD;
 
-			// A2-env: eye = target + radius * out_direction (same formula as orbit())
 			float ce = std::cos(free_camera.elevation);
 			float se = std::sin(free_camera.elevation);
 			float ca = std::cos(free_camera.azimuth);
@@ -1961,21 +2093,16 @@ void Tutorial::update(float dt) {
 			eye_y = free_camera.target_y + free_camera.radius * ce * sa;
 			eye_z = free_camera.target_z + free_camera.radius * se;
 
-			// set culling matrix
 			CULLING_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
-		} else if (camera_mode == CameraMode::Debug) {	// DBEUG
-			// clip matrix used for rendering
-			CLIP_FROM_WORLD = perspective(
-				debug_camera.fov,
-				rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),	// aspect
-				debug_camera.near,
-				debug_camera.far
-			) * orbit(
+		} else if (camera_mode == CameraMode::Debug) {	// DEBUG
+			float aspect = rtg.swapchain_extent.width / float(rtg.swapchain_extent.height);
+			VIEW_FROM_WORLD = orbit(
 				debug_camera.target_x, debug_camera.target_y, debug_camera.target_z,
 				debug_camera.azimuth, debug_camera.elevation, debug_camera.radius
 			);
+			CLIP_FROM_VIEW = perspective(debug_camera.fov, aspect, debug_camera.near, debug_camera.far);
+			CLIP_FROM_WORLD = CLIP_FROM_VIEW * VIEW_FROM_WORLD;
 
-			// A2-env: eye from debug orbit camera
 			float ce = std::cos(debug_camera.elevation);
 			float se = std::sin(debug_camera.elevation);
 			float ca = std::cos(debug_camera.azimuth);
@@ -1983,8 +2110,6 @@ void Tutorial::update(float dt) {
 			eye_x = debug_camera.target_x + debug_camera.radius * ce * ca;
 			eye_y = debug_camera.target_y + debug_camera.radius * ce * sa;
 			eye_z = debug_camera.target_z + debug_camera.radius * se;
-
-			// culling uses the previous camera's clip matrix
 
 		} else {
 			assert(0 && "unknown camera mode");
@@ -2545,7 +2670,7 @@ void Tutorial::on_input(InputEvent const &evt) {
 			else if (evt.key.key == GLFW_KEY_V)
 			{
 				gbuf_debug_view = GBufDebugView((uint32_t(gbuf_debug_view) + 1) % uint32_t(GBufDebugView::Count));
-				static const char *names[] = {"None", "Position", "Normal", "Albedo", "Depth"};
+				static const char *names[] = {"None", "Position", "Normal", "Albedo", "Depth", "SSAO"};
 				std::cout << "[SSAO/SSDO]: debug view = " << names[uint32_t(gbuf_debug_view)] << std::endl;
 			}
 			return;

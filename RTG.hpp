@@ -94,6 +94,9 @@ struct RTG {
 
 		// SSAO/SSDO debug visualization:
 		std::string debug_view = "";		// --debug-view position|normal|albedo|depth
+
+		// SSAO:
+		uint32_t ssao_samples = 32;			// --ssao-samples N (1..64)
 	};	
 
 	Configuration configuration; //configuration, as used (might have extra extensions, layers, or flags added)

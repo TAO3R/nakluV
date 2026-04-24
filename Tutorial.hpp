@@ -241,6 +241,8 @@ struct Tutorial : RTG::Application {
 	
 	// computed from the current camera (as set by camera_mode) during update():
 	mat4 CLIP_FROM_WORLD;
+	mat4 VIEW_FROM_WORLD;
+	mat4 CLIP_FROM_VIEW;
 
 	std::vector<LinesPipeline::Vertex> lines_vertices;
 
@@ -807,7 +809,8 @@ struct Tutorial : RTG::Application {
 		Normal = 2,
 		Albedo = 3,
 		Depth = 4,
-		Count = 5,
+		SSAO = 5,
+		Count = 6,
 	};
 	GBufDebugView gbuf_debug_view = GBufDebugView::None;
 
@@ -894,4 +897,80 @@ struct Tutorial : RTG::Application {
 			VkDescriptorSetLayout set0_GBuffer);
 		void destroy(RTG &);
 	} debug_gbuffer_pipeline;
+
+
+	// SSAO
+
+	static constexpr uint32_t SSAO_MAX_SAMPLES = 64;
+
+	struct SSAOParams {
+		float VIEW_FROM_WORLD[16];
+		float CLIP_FROM_VIEW[16];
+		float samples[SSAO_MAX_SAMPLES][4];
+		float noise_scale_x, noise_scale_y;
+		float radius;
+		float bias;
+		uint32_t sample_count;
+		float _pad[3];
+	};
+	static_assert(sizeof(SSAOParams) == (16 + 16 + 64*4 + 8) * sizeof(float), "SSAOParams layout");
+
+	uint32_t ssao_sample_count = 32;
+	float ssao_kernel[SSAO_MAX_SAMPLES][4];
+
+	Helpers::AllocatedImage ssao_noise_image;
+	VkImageView ssao_noise_view = VK_NULL_HANDLE;
+	VkSampler ssao_noise_sampler = VK_NULL_HANDLE;
+
+	Helpers::AllocatedImage ssao_image;
+	VkImageView ssao_image_view = VK_NULL_HANDLE;
+	Helpers::AllocatedImage ssao_blur_image;
+	VkImageView ssao_blur_image_view = VK_NULL_HANDLE;
+	VkRenderPass ssao_render_pass = VK_NULL_HANDLE;
+	VkFramebuffer ssao_framebuffer = VK_NULL_HANDLE;
+	VkFramebuffer ssao_blur_framebuffer = VK_NULL_HANDLE;
+
+	void create_ssao_render_pass();
+	void create_ssao_images(VkExtent2D extent);
+	void destroy_ssao_images();
+
+	VkDescriptorSetLayout ssao_params_set_layout = VK_NULL_HANDLE;
+	VkDescriptorSetLayout ssao_noise_set_layout = VK_NULL_HANDLE;
+	VkDescriptorSetLayout ssao_blur_input_set_layout = VK_NULL_HANDLE;
+
+	struct SSAOPipeline {
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass,
+			VkDescriptorSetLayout set0_GBuffer,
+			VkDescriptorSetLayout set1_SSAOParams,
+			VkDescriptorSetLayout set2_Noise);
+		void destroy(RTG &);
+	} ssao_pipeline;
+
+	struct SSAOBlurPipeline {
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass,
+			VkDescriptorSetLayout set0_SSAOInput);
+		void destroy(RTG &);
+	} ssao_blur_pipeline;
+
+	VkDescriptorPool ssao_descriptor_pool = VK_NULL_HANDLE;
+	VkDescriptorSet ssao_noise_descriptors = VK_NULL_HANDLE;
+
+	struct SSAOWorkspace {
+		Helpers::AllocatedBuffer ssao_params_src;
+		Helpers::AllocatedBuffer ssao_params;
+		VkDescriptorSet ssao_params_descriptors = VK_NULL_HANDLE;
+		VkDescriptorSet ssao_raw_descriptors = VK_NULL_HANDLE;
+	};
+	std::vector<SSAOWorkspace> ssao_workspaces;
+
+	void create_ssao_descriptors();
+	void update_ssao_descriptors(uint32_t workspace_index);
+	void generate_ssao_kernel();
+	void create_ssao_noise_texture();
 };

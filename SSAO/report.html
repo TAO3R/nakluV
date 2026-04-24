@@ -142,22 +142,26 @@ video {
 <span class="subtitle">by <span>Tao Jin (tjin2)</span></span>
 </h1>
 
-<p class="placeholder">
-Summarize, in about one paragraph, your approach to the SSAO/SSDO assignment.
-How did you structure your code?
-What's cool about it? Are there parts you weren't able to complete?
+<p>
+The renderer was first converted from a forward rendering pipeline to a deferred rendering pipeline as a prerequisite for screen-space effects.
+Geometry attributes (position, normal, albedo, roughness, metalness) are written to a multi-render-target G-buffer in a dedicated geometry pass, and a fullscreen deferred lighting pass reads those textures to compute final shading.
+SSAO was then implemented as two additional fullscreen passes between the G-buffer and lighting: a hemisphere sampling pass that generates a single-channel occlusion texture in view space using a normal-oriented kernel and tiled noise, and a 4&times;4 box blur pass that smooths the result.
+The blurred AO is sampled by the deferred lighting shader and applied to ambient and IBL terms.
+All new code lives in the <code>SSAO/</code> folder, with resources and pipeline structs declared in a dedicated section at the end of <code>Tutorial.hpp</code>.
+The SSAO sample count is exposed as a runtime parameter (<code>--ssao-samples N</code>) for performance and quality analysis.
 </p>
 
 <h3>Command-line Arguments</h3>
 
 <ul>
-<li><code>--debug-view <var>mode</var></code> -- optional -- start the viewer with G-buffer debug visualization set to <code><var>mode</var></code>, where <code><var>mode</var></code> is one of <code>position</code>, <code>normal</code>, <code>albedo</code>, or <code>depth</code></li>
+<li><code>--debug-view <var>mode</var></code> -- optional -- start the viewer with G-buffer debug visualization set to <code><var>mode</var></code>, where <code><var>mode</var></code> is one of <code>position</code>, <code>normal</code>, <code>albedo</code>, <code>depth</code>, or <code>ssao</code></li>
+<li><code>--ssao-samples <var>N</var></code> -- optional -- set the SSAO hemisphere sample count to <code><var>N</var></code> (clamped to 1&ndash;64, default 32)</li>
 </ul>
 
 <h3>Controls</h3>
 
 <ul>
-<li><kbd>V</kbd> When in debug camera mode, cycle through G-buffer debug views: None &rarr; Position &rarr; Normal &rarr; Albedo &rarr; Depth &rarr; None.</li>
+<li><kbd>V</kbd> When in debug camera mode, cycle through G-buffer debug views: None &rarr; Position &rarr; Normal &rarr; Albedo &rarr; Depth &rarr; SSAO &rarr; None.</li>
 </ul>
 
 
@@ -282,8 +286,145 @@ Background pixels (depth = 1.0) are rendered as black.
 
 <h2>SSAO</h2>
 
-<p class="placeholder">
-To be completed in Phase 2.
+<p>
+Screen-space ambient occlusion (SSAO) darkens ambient light in creases, corners, and areas where nearby geometry occludes the hemisphere above a surface point.
+It is implemented as two additional fullscreen passes inserted between the G-buffer pass and the main render pass: an SSAO sampling pass that produces a single-channel occlusion texture, and a blur pass that smooths the noisy raw output.
+The blurred result is then read by the deferred lighting shader and multiplied into the ambient and IBL terms.
+</p>
+
+<h3>View-Space Hemisphere Sampling</h3>
+
+<p>
+The G-buffer stores positions and normals in world space, but the SSAO algorithm operates in view space, following the approach described in the LearnOpenGL SSAO tutorial and the Ritschel SSDO paper.
+Rather than modifying the G-buffer layout, the SSAO shader transforms the sampled world-space position and normal to view space using a <code>VIEW_FROM_WORLD</code> matrix provided via a dedicated UBO.
+This keeps the existing deferred lighting path entirely untouched.
+</p>
+
+<p>
+To support this, the camera matrix computation in <code>Tutorial::update()</code> was refactored.
+The original <code>CLIP_FROM_WORLD = perspective(...) * view(...)</code> was split into its two components: <code>VIEW_FROM_WORLD</code> (the view matrix alone) and <code>CLIP_FROM_VIEW</code> (the projection matrix alone).
+Both are stored as <code>mat4</code> members of <code>Tutorial</code> and computed for all three camera modes (scene, user, debug).
+<code>CLIP_FROM_WORLD</code> is then reassembled as their product to keep all existing code working.
+</p>
+
+<h3>Kernel Generation and Noise Texture</h3>
+
+<p>
+At startup, <code>generate_ssao_kernel()</code> in <code>SSAO/SSAO.cpp</code> produces 64 sample offsets distributed over a unit hemisphere in tangent space.
+Each sample is a random point with positive z (pointing along the surface normal), rejection-sampled to lie within the unit sphere.
+Samples are normalized and then scaled by a quadratically-interpolated factor that concentrates more samples closer to the origin, so nearby geometry has more influence than distant geometry.
+All 64 samples are always stored in the UBO; the <code>sample_count</code> field controls how many the shader actually iterates over at runtime.
+</p>
+
+<p>
+A persistent 4&times;4 noise texture is created once at startup by <code>create_ssao_noise_texture()</code>.
+It stores 16 random tangent-space rotation vectors as <code>R16G16B16A16_SFLOAT</code> texels, each with z&nbsp;=&nbsp;0 and xy normalized.
+The texture is sampled with <code>VK_SAMPLER_ADDRESS_MODE_REPEAT</code> and nearest filtering, so it tiles seamlessly across the screen.
+In the shader, the texture coordinate is scaled by <code>(swapchain_width / 4, swapchain_height / 4)</code> to produce a different random rotation every 4&times;4 pixel block.
+This rotation is used to build a per-fragment TBN matrix via Gram&ndash;Schmidt orthogonalization of the noise vector against the view-space normal, which randomizes the sample hemisphere orientation and breaks up banding artifacts without requiring an impractically large number of samples.
+</p>
+
+<h3>SSAO UBO and Runtime Sample Count</h3>
+
+<p>
+An <code>SSAOParams</code> struct is declared in <code>Tutorial.hpp</code> under the <code>// SSAO</code> section.
+It contains the <code>VIEW_FROM_WORLD</code> and <code>CLIP_FROM_VIEW</code> matrices, the 64-element sample kernel, <code>noise_scale</code> for tiling the noise texture, a sampling <code>radius</code> (default 0.5), a depth <code>bias</code> (default 0.025), and a <code>sample_count</code> field.
+The struct is laid out to match GLSL <code>std140</code> rules, with explicit padding to align to 16 bytes.
+</p>
+
+<p>
+The sample count is exposed as a runtime parameter: the <code>--ssao-samples N</code> command-line argument (parsed in <code>RTG::Configuration</code>, clamped to [1,&nbsp;64]) sets <code>ssao_sample_count</code> in <code>Tutorial</code>.
+The shader reads this value from the UBO and loops <code>for (uint i = 0; i < sample_count; i++)</code>, dividing the accumulated occlusion by <code>sample_count</code> at the end.
+This allows sweeping sample counts (e.g., 8, 16, 32, 64) for performance and quality analysis without recompilation.
+</p>
+
+<p>
+Each workspace gets a pair of host-visible staging and device-local UBO buffers (<code>ssao_params_src</code>, <code>ssao_params</code>), plus a descriptor set pointing the UBO binding at the device-local buffer.
+The UBO is filled and uploaded per frame in <code>Tutorial::render()</code> immediately before the SSAO pass, with a pipeline barrier ensuring the transfer completes before the fragment shader reads it.
+</p>
+
+<h3>SSAO Images, Render Pass, and Framebuffers</h3>
+
+<p>
+Two <code>R8_UNORM</code> images are created at swapchain resolution: <code>ssao_image</code> (raw SSAO output) and <code>ssao_blur_image</code> (blurred result), each with <code>COLOR_ATTACHMENT_BIT | SAMPLED_BIT</code>.
+A single <code>VkRenderPass</code> called <code>ssao_render_pass</code> is shared by both passes; it has one <code>R8_UNORM</code> color attachment with <code>loadOp = CLEAR</code>, <code>storeOp = STORE</code>, and <code>finalLayout = SHADER_READ_ONLY_OPTIMAL</code>, plus a subpass dependency that synchronizes color attachment writes with subsequent fragment shader reads.
+Two separate framebuffers attach <code>ssao_image_view</code> and <code>ssao_blur_image_view</code> to this shared render pass.
+These resources are created and destroyed in <code>create_ssao_images()</code> and <code>destroy_ssao_images()</code> in <code>SSAO/SSAO.cpp</code>, called from <code>on_swapchain()</code> and <code>destroy_framebuffers()</code> alongside the G-buffer images.
+</p>
+
+<h3>SSAO Pipeline and Shader</h3>
+
+<p>
+The <code>SSAOPipeline</code> struct is declared in <code>Tutorial.hpp</code> and implemented in <code>SSAO/SSAOPipeline.cpp</code>.
+It is a fullscreen triangle pipeline using <code>SSAO/fullscreen.vert</code> and <code>SSAO/ssao.frag</code>, with no vertex input, no depth testing, no blending, and culling disabled.
+Its pipeline layout has three descriptor sets: set 0 reuses <code>deferred_set0_GBuffer</code> (the five G-buffer + SSAO bindings), set 1 binds the <code>SSAOParams</code> UBO, and set 2 binds the noise texture as a combined image sampler.
+The color write mask is <code>R</code>-only since the output is a single float.
+</p>
+
+<p>
+The fragment shader <code>SSAO/ssao.frag</code> implements the core algorithm.
+For each fragment, it first checks the G-buffer depth; background pixels (depth &ge; 1.0) immediately output 1.0 (no occlusion) and return.
+Otherwise, it samples the world-space position and normal from the G-buffer and transforms them to view space using <code>VIEW_FROM_WORLD</code>.
+The noise texture is sampled at the tiled coordinate to get a random rotation vector, which is orthogonalized against the view-space normal via Gram&ndash;Schmidt to build a TBN matrix.
+</p>
+
+<p>
+For each of the <code>sample_count</code> kernel samples, the shader transforms the tangent-space offset through TBN to view space, scales by <code>radius</code>, and adds to the fragment's view-space position to get a candidate sample point.
+This point is projected to screen coordinates via <code>CLIP_FROM_VIEW</code>, perspective-divided, and remapped to [0,&nbsp;1] UV.
+Samples that fall outside the screen are skipped.
+At the projected UV, the shader checks the G-buffer depth: if the sampled pixel is background (depth &ge; 1.0), it is also skipped to prevent false occlusion halos at object silhouettes against the sky.
+For valid samples, the world-space position at the projected UV is transformed to view space, and its z-component is compared against the candidate sample's z-component.
+If the actual surface is closer to the camera than the sample (i.e., the sample is behind geometry), occlusion is accumulated, modulated by a <code>smoothstep</code> range check that attenuates contributions from geometry that is too far away relative to the sampling radius.
+The final output is <code>1.0 - (occlusion / sample_count)</code>.
+</p>
+
+<h3>Blur Pass</h3>
+
+<p>
+The raw SSAO texture exhibits high-frequency noise from the 4&times;4 tiled rotation pattern.
+A simple 4&times;4 box blur smooths this out.
+The <code>SSAOBlurPipeline</code> is implemented in <code>SSAO/SSAOBlurPipeline.cpp</code> as a fullscreen triangle pipeline with a single descriptor set binding the raw SSAO texture at set 0.
+The fragment shader <code>SSAO/ssao_blur.frag</code> averages the 16 texels in a 4&times;4 neighborhood centered at half-texel offsets (x&nbsp;&in;&nbsp;[&minus;2,&nbsp;1], y&nbsp;&in;&nbsp;[&minus;2,&nbsp;1], each shifted by 0.5) and outputs the result.
+</p>
+
+<h3>Descriptor Management</h3>
+
+<p>
+A dedicated <code>ssao_descriptor_pool</code> is created in <code>create_ssao_descriptors()</code> to hold per-workspace UBO descriptor sets, per-workspace raw-SSAO-texture descriptor sets, and one shared noise texture descriptor set.
+Three new descriptor set layouts are defined: <code>ssao_params_set_layout</code> (one UBO binding), <code>ssao_noise_set_layout</code> (one combined image sampler), and <code>ssao_blur_input_set_layout</code> (one combined image sampler for the raw SSAO texture).
+The noise descriptor set is allocated once and pointed at the noise texture view with the repeat sampler.
+Per-workspace descriptors are updated in <code>update_ssao_descriptors()</code> whenever the SSAO images are recreated on swapchain resize.
+</p>
+
+<p>
+The existing <code>deferred_set0_GBuffer</code> descriptor set layout was extended from four bindings to five, adding binding 4 for the blurred SSAO texture.
+<code>update_deferred_descriptors()</code> now writes the blurred SSAO image view into this fifth binding, so the deferred lighting shader can read it at <code>set 0, binding 4</code> without any changes to the pipeline layout or set binding calls in the render loop.
+</p>
+
+<h3>Render Loop Integration</h3>
+
+<p>
+In <code>Tutorial::render()</code>, two new render passes are inserted between the G-buffer pass and the main render pass.
+First, the <code>SSAOParams</code> UBO is filled with the current frame's <code>VIEW_FROM_WORLD</code>, <code>CLIP_FROM_VIEW</code>, the 64 kernel samples, the noise scale, radius, bias, and sample count, then copied from the staging buffer to the device-local buffer with a memory barrier.
+The SSAO pass then begins <code>ssao_render_pass</code> with <code>ssao_framebuffer</code>, binds the SSAO pipeline with the G-buffer descriptors (set 0), SSAO params (set 1), and noise texture (set 2), and draws a fullscreen triangle.
+The blur pass immediately follows using the same render pass but with <code>ssao_blur_framebuffer</code>, binding the blur pipeline with the raw SSAO texture as input.
+</p>
+
+<h3>Deferred Lighting Integration</h3>
+
+<p>
+In <code>SSAO/deferred_lighting.frag</code>, a new sampler <code>gSSAO</code> at <code>set 0, binding 4</code> reads the blurred occlusion texture.
+For each fragment, the shader samples <code>float ao = texture(gSSAO, texCoord).r</code>.
+This value is multiplied into the ambient and IBL terms: for PBR materials, both the diffuse IBL irradiance and the specular IBL contribution are scaled by <code>ao</code>; for Lambertian materials, the IBL irradiance is scaled by <code>ao</code>.
+Direct lighting from point, spot, and sun lights is intentionally <em>not</em> scaled by AO, since direct light sources have their own shadow maps to handle occlusion.
+Environment and mirror material types also have their cubemap lookups scaled by <code>ao</code>.
+</p>
+
+<h3>Debug Visualization</h3>
+
+<p>
+The SSAO output can be inspected by pressing <kbd>V</kbd> in debug camera mode to cycle to the SSAO view (mode 5), or by starting with <code>--debug-view ssao</code>.
+The debug fragment shader <code>SSAO/debug_gbuffer.frag</code> was extended with a new branch that samples the blurred AO texture and displays it as a grayscale image, where white represents no occlusion and black represents full occlusion.
 </p>
 
 
