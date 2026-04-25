@@ -121,7 +121,15 @@ video {
 	max-width: 100%;
 	height: auto;
 }
-
+.center_image {
+    display: block;      /* Required to make margins work */
+    margin-left: auto;   /* Pushes from the left */
+    margin-right: auto;  /* Pushes from the right */
+    
+    /* Good practice for responsiveness */
+    max-width: 100%;     
+    height: auto;        
+}
 .image-row {
     display: flex;
     justify-content: center;
@@ -143,10 +151,13 @@ video {
 </h1>
 
 <p>
-The renderer was first converted from a forward rendering pipeline to a deferred rendering pipeline as a prerequisite for screen-space effects.
-Geometry attributes (position, normal, albedo, roughness, metalness) are written to a multi-render-target G-buffer in a dedicated geometry pass, and a fullscreen deferred lighting pass reads those textures to compute final shading.
-SSAO was then implemented as two additional fullscreen passes between the G-buffer and lighting: a hemisphere sampling pass that generates a single-channel occlusion texture in view space using a normal-oriented kernel and tiled noise, and a 4&times;4 box blur pass that smooths the result.
-The blurred AO is sampled by the deferred lighting shader and applied to ambient and IBL terms.
+I first converted the renderer from forward to deferred rendering as a prerequisite for screen-space effects.
+Geometry attributes (position, normal, albedo, roughness, metalness) get written to a multi-render-target G-buffer in a dedicated geometry pass, and a fullscreen deferred lighting pass reads those textures to compute final shading.
+On top of that, I implemented SSAO as two fullscreen passes between the G-buffer and lighting &mdash; a hemisphere sampling pass that produces a single-channel occlusion texture in view space using a normal-oriented kernel and tiled noise, plus a 4&times;4 box blur to smooth the result.
+I then implemented SSDO as another pair of fullscreen passes that run right after SSAO.
+SSDO reuses the same hemisphere kernel and noise texture, but instead of just computing scalar occlusion, it reads the blocker&rsquo;s albedo and estimates its irradiance to produce an RGB indirect color bounce texture.
+The deferred lighting shader reads both: the scalar AO darkens ambient/IBL terms, and the SSDO indirect bounce is added on top as new light arriving from nearby colored surfaces.
+Both SSAO and SSDO run every frame and are complementary &mdash; SSAO darkens crevices, SSDO fills them with bounced color.
 All new code lives in the <code>SSAO/</code> folder, with resources and pipeline structs declared in a dedicated section at the end of <code>Tutorial.hpp</code>.
 The SSAO sample count is exposed as a runtime parameter (<code>--ssao-samples N</code>) for performance and quality analysis.
 </p>
@@ -154,24 +165,24 @@ The SSAO sample count is exposed as a runtime parameter (<code>--ssao-samples N<
 <h3>Command-line Arguments</h3>
 
 <ul>
-<li><code>--debug-view <var>mode</var></code> -- optional -- start the viewer with G-buffer debug visualization set to <code><var>mode</var></code>, where <code><var>mode</var></code> is one of <code>position</code>, <code>normal</code>, <code>albedo</code>, <code>depth</code>, or <code>ssao</code></li>
+<li><code>--debug-view <var>mode</var></code> -- optional -- start the viewer with G-buffer debug visualization set to <code><var>mode</var></code>, where <code><var>mode</var></code> is one of <code>position</code>, <code>normal</code>, <code>albedo</code>, <code>depth</code>, <code>ssao</code>, or <code>ssdo</code></li>
 <li><code>--ssao-samples <var>N</var></code> -- optional -- set the SSAO hemisphere sample count to <code><var>N</var></code> (clamped to 1&ndash;64, default 32)</li>
 </ul>
 
 <h3>Controls</h3>
 
 <ul>
-<li><kbd>V</kbd> When in debug camera mode, cycle through G-buffer debug views: None &rarr; Position &rarr; Normal &rarr; Albedo &rarr; Depth &rarr; SSAO &rarr; None.</li>
+<li><kbd>V</kbd> When in debug camera mode, cycle through G-buffer debug views: None &rarr; Position &rarr; Normal &rarr; Albedo &rarr; Depth &rarr; SSAO &rarr; SSDO &rarr; None.</li>
 </ul>
 
 
 <h2>Deferred Rendering Pipeline</h2>
 
 <p>
-As a prerequisite for SSAO and SSDO, the renderer was converted from a forward rendering pipeline to a deferred rendering pipeline.
-In forward rendering, the fragment shader <code>objects.frag</code> evaluated full material and lighting for every fragment inline during the single main render pass.
+As a prerequisite for SSAO and SSDO, I converted the renderer from a forward rendering pipeline to a deferred rendering pipeline.
+In the forward path, the fragment shader <code>objects.frag</code> evaluated full material and lighting for every fragment inline during the single main render pass.
 In deferred rendering, geometry and lighting are separated into distinct passes: a G-buffer pass writes surface attributes to off-screen textures, and a subsequent fullscreen lighting pass reads those textures to compute the final shading.
-This decoupling allows screen-space techniques like SSAO and SSDO to operate on the G-buffer between the geometry and lighting passes.
+This decoupling is what lets screen-space techniques like SSAO and SSDO operate on the G-buffer between the geometry and lighting passes.
 </p>
 
 <h3>G-Buffer Layout and Resources</h3>
@@ -253,7 +264,7 @@ These descriptors are updated by <code>update_deferred_descriptors()</code> when
 <h3>Render Loop Restructuring</h3>
 
 <p>
-The render loop in <code>Tutorial::render()</code> was restructured from the original order (shadow pass &rarr; main pass with background, lines, and objects) to:
+I restructured the render loop in <code>Tutorial::render()</code> from the original order (shadow pass &rarr; main pass with background, lines, and objects) to:
 </p>
 <ol>
 <li>Upload transforms, lights, and shadow parameters (unchanged).</li>
@@ -265,8 +276,8 @@ The render loop in <code>Tutorial::render()</code> was restructured from the ori
 <h3>G-Buffer Debug Visualization</h3>
 
 <p>
-To aid development and verification, a debug visualization system was implemented that allows inspecting individual G-buffer channels at runtime.
-An enum <code>GBufDebugView</code> with values <code>None</code>, <code>Position</code>, <code>Normal</code>, <code>Albedo</code>, <code>Depth</code>, and <code>Count</code> is declared in <code>Tutorial.hpp</code>.
+To help with development and verification, I added a debug visualization system that lets me inspect individual G-buffer channels at runtime.
+An enum <code>GBufDebugView</code> with values <code>None</code>, <code>Position</code>, <code>Normal</code>, <code>Albedo</code>, <code>Depth</code>, <code>SSAO</code>, <code>SSDO</code>, and <code>Count</code> is declared in <code>Tutorial.hpp</code>.
 When in debug camera mode, pressing <kbd>V</kbd> cycles through these modes, printing the current mode to the console (e.g., <code>[SSAO/SSDO]: debug view = Normal</code>).
 The initial mode can also be set via the <code>--debug-view</code> command-line argument, parsed in <code>RTG::Configuration::parse()</code> and converted in the <code>Tutorial</code> constructor.
 </p>
@@ -284,11 +295,22 @@ The far plane passed to the depth visualization is computed per-frame on the CPU
 Background pixels (depth = 1.0) are rendered as black.
 </p>
 
+<p>
+G-buffer debug visuals:
+<img src="report_files/ssao_scene.png" alt="ssao scene view" class="center_image">
+<img src="report_files/ssao_position.png" alt="ssao position debug view" class="center_image">
+<img src="report_files/ssao_normal.png" alt="ssao normal debug view" class="center_image">
+<img src="report_files/ssao_albedo.png" alt="ssao albedo debug view" class="center_image">
+<img src="report_files/ssao_depth.png" alt="ssao depth debug view" class="center_image">
+<img src="report_files/ssao_ssao.png" alt="ssao occlusion debug view" class="center_image">
+
+</p>
+
 <h2>SSAO</h2>
 
 <p>
 Screen-space ambient occlusion (SSAO) darkens ambient light in creases, corners, and areas where nearby geometry occludes the hemisphere above a surface point.
-It is implemented as two additional fullscreen passes inserted between the G-buffer pass and the main render pass: an SSAO sampling pass that produces a single-channel occlusion texture, and a blur pass that smooths the noisy raw output.
+I implemented it as two additional fullscreen passes inserted between the G-buffer pass and the main render pass: an SSAO sampling pass that produces a single-channel occlusion texture, and a blur pass that smooths the noisy raw output.
 The blurred result is then read by the deferred lighting shader and multiplied into the ambient and IBL terms.
 </p>
 
@@ -301,7 +323,7 @@ This keeps the existing deferred lighting path entirely untouched.
 </p>
 
 <p>
-To support this, the camera matrix computation in <code>Tutorial::update()</code> was refactored.
+To support this, I refactored the camera matrix computation in <code>Tutorial::update()</code>.
 The original <code>CLIP_FROM_WORLD = perspective(...) * view(...)</code> was split into its two components: <code>VIEW_FROM_WORLD</code> (the view matrix alone) and <code>CLIP_FROM_VIEW</code> (the projection matrix alone).
 Both are stored as <code>mat4</code> members of <code>Tutorial</code> and computed for all three camera modes (scene, user, debug).
 <code>CLIP_FROM_WORLD</code> is then reassembled as their product to keep all existing code working.
@@ -378,6 +400,22 @@ If the actual surface is closer to the camera than the sample (i.e., the sample 
 The final output is <code>1.0 - (occlusion / sample_count)</code>.
 </p>
 
+<p>
+<br>Without background check:
+<div class="image-row">
+    <img src="report_files/depth_without_bg_check.png" alt="depth debug view">
+    <img src="report_files/ssao_without_bg_check.png" alt="ssao debug view">
+</div>
+</p>
+
+<p>
+<br>With background check:
+<div class="image-row">
+    <img src="report_files/depth_with_bg_check.png" alt="depth debug view">
+    <img src="report_files/ssao_with_bg_check.png" alt="ssao debug view">
+</div>
+</p>
+
 <h3>Blur Pass</h3>
 
 <p>
@@ -397,8 +435,9 @@ Per-workspace descriptors are updated in <code>update_ssao_descriptors()</code> 
 </p>
 
 <p>
-The existing <code>deferred_set0_GBuffer</code> descriptor set layout was extended from four bindings to five, adding binding 4 for the blurred SSAO texture.
+I extended the existing <code>deferred_set0_GBuffer</code> descriptor set layout from four bindings to five, adding binding 4 for the blurred SSAO texture.
 <code>update_deferred_descriptors()</code> now writes the blurred SSAO image view into this fifth binding, so the deferred lighting shader can read it at <code>set 0, binding 4</code> without any changes to the pipeline layout or set binding calls in the render loop.
+(This layout was later extended again to six bindings for SSDO &mdash; see the SSDO section below.)
 </p>
 
 <h3>Render Loop Integration</h3>
@@ -427,11 +466,162 @@ The SSAO output can be inspected by pressing <kbd>V</kbd> in debug camera mode t
 The debug fragment shader <code>SSAO/debug_gbuffer.frag</code> was extended with a new branch that samples the blurred AO texture and displays it as a grayscale image, where white represents no occlusion and black represents full occlusion.
 </p>
 
+<p>
+<br>Different sample count (4, 8, 16, 32, 64):
+<img src="report_files/ssao_7680_4320_4.png" alt="ssao sample count = 4" class="center_image"> <br>
+<img src="report_files/ssao_7680_4320_8.png" alt="ssao sample count = 8" class="center_image"> <br>
+<img src="report_files/ssao_7680_4320_16.png" alt="ssao sample count = 16" class="center_image"> <br>
+<img src="report_files/ssao_7680_4320_32.png" alt="ssao sample count = 32" class="center_image"> <br>
+<img src="report_files/ssao_7680_4320_64.png" alt="ssao sample count = 64" class="center_image"> <br>
+
+
+Shadows are becoming softer as sample count increas.
 
 <h2>SSDO</h2>
 
-<p class="placeholder">
-To be completed in Phase 2.
+<p>
+Screen-space directional occlusion (SSDO) extends SSAO by adding one-bounce indirect illumination &mdash; color bleeding from nearby surfaces.
+Where SSAO just computes a scalar &ldquo;how much ambient light is blocked,&rdquo; SSDO asks &ldquo;what light is the blocking geometry bouncing back toward this point?&rdquo;
+The result is an RGB indirect bounce texture that gets added to the final lighting, giving colored soft reflections between nearby surfaces (e.g., a red wall tinting a nearby white floor pink).
+I implemented SSDO as a completely separate pass from SSAO, running right after the SSAO blur and before the main render pass.
+Both effects run every frame: SSAO produces scalar ambient darkening, and SSDO adds colored indirect light on top.
+They&rsquo;re complementary rather than redundant.
+</p>
+
+<h3>SSDO Images, Render Pass, and Framebuffers</h3>
+
+<p>
+Since the SSDO pass outputs RGB color (not just a scalar), I use <code>R16G16B16A16_SFLOAT</code> images instead of the <code>R8_UNORM</code> that SSAO uses.
+Half-float is necessary because the indirect bounce can exceed [0, 1] in HDR scenes.
+I created <code>ssdo_image</code> (raw output) and <code>ssdo_blur_image</code> (blurred result), each with <code>COLOR_ATTACHMENT_BIT | SAMPLED_BIT</code>, at swapchain resolution.
+A new render pass <code>ssdo_render_pass</code> is created in <code>create_ssdo_render_pass()</code> in <code>SSAO/SSAO.cpp</code>.
+It&rsquo;s identical in structure to <code>ssao_render_pass</code> but with <code>R16G16B16A16_SFLOAT</code> as the attachment format instead of <code>R8_UNORM</code>.
+Two separate framebuffers attach <code>ssdo_image_view</code> and <code>ssdo_blur_image_view</code> to this render pass.
+These resources are managed in <code>create_ssdo_images()</code> and <code>destroy_ssdo_images()</code>, called from <code>on_swapchain()</code> and <code>destroy_framebuffers()</code> alongside the SSAO images.
+</p>
+
+<h3>SSDO Pipeline and Shader</h3>
+
+<p>
+The <code>SSDOPipeline</code> struct is declared in <code>Tutorial.hpp</code> and implemented in <code>SSAO/SSDOPipeline.cpp</code>.
+It&rsquo;s a fullscreen triangle pipeline using <code>SSAO/fullscreen.vert</code> and <code>SSAO/ssdo.frag</code>, with the same no-vertex-input, no-depth, no-cull setup as the SSAO pipeline, but with an RGBA color write mask since the output is RGB.
+The pipeline layout has five descriptor sets: set 0 reuses <code>deferred_set0_GBuffer</code> (the G-buffer textures), set 1 binds the <code>SSAOParams</code> UBO (same kernel, matrices, and parameters as SSAO &mdash; no extra UBO needed), set 2 binds the noise texture, set 3 binds the World UBO (for sky/sun energy and the <code>has_lambertian</code> flag), and set 4 binds the Lambertian cubemap.
+The extra two sets compared to SSAO are needed because the SSDO shader has to estimate the irradiance arriving at each blocker surface.
+</p>
+
+<p>
+The fragment shader <code>SSAO/ssdo.frag</code> shares the same hemisphere sampling structure as <code>ssao.frag</code> &mdash; it reads the same <code>SSAOParams</code> UBO, builds the same TBN from the noise texture, and projects samples the same way.
+The key difference is what happens for occluded samples.
+In SSAO, an occluded sample just increments a scalar occlusion counter.
+In SSDO, I do something more useful with it: for each occluded sample, the shader reads the blocker&rsquo;s surface data and computes how much light it bounces back.
+Specifically, for each occluded sample, the shader:
+</p>
+
+<ol>
+<li>Reads the blocker&rsquo;s albedo from <code>gAlbedo</code> and its world-space normal from <code>gNormal</code> at the projected screen UV.</li>
+<li>Estimates the blocker&rsquo;s incoming irradiance: if a lambertian cubemap is available (<code>has_lambertian == 1</code>), it samples <code>LAMBERTIAN_CUBEMAP</code> at the blocker&rsquo;s world-space normal; otherwise it falls back to the sky/sun energy approximation, the same formula used by the deferred lighting shader.</li>
+<li>Computes a form factor between the shading point and the blocker.
+The blocker&rsquo;s view-space position is obtained by transforming its world position through <code>VIEW_FROM_WORLD</code>.
+The form factor is <code>cos_receiver &times; cos_sender &times; rangeCheck</code>, where <code>cos_receiver</code> is the cosine of the angle between the shading point&rsquo;s view-space normal and the direction to the blocker, <code>cos_sender</code> is the cosine between the negative of that direction and the blocker&rsquo;s view-space normal, and <code>rangeCheck</code> is the same <code>smoothstep</code> attenuation used in SSAO to fade out contributions from geometry outside the sampling radius.</li>
+<li>Accumulates <code>blockerAlbedo &times; blockerIrradiance &times; formFactor</code> into the indirect color sum.</li>
+</ol>
+
+<p>
+The final output is <code>indirect / sample_count</code>.
+Background pixels (depth &ge; 1.0) output <code>vec4(0)</code> &mdash; no indirect bounce from the sky.
+The <code>cos_receiver &times; cos_sender</code> product means only surfaces that face each other exchange light, which is physically correct and naturally avoids back-facing contributions.
+</p>
+
+<h3>Blur Pass</h3>
+
+<p>
+The raw SSDO texture has the same 4&times;4 tiled noise pattern as SSAO, so it gets the same treatment: a 4&times;4 box blur.
+The <code>SSDOBlurPipeline</code> is implemented in <code>SSAO/SSDOBlurPipeline.cpp</code> as a fullscreen triangle pipeline with a single descriptor set for the raw SSDO texture.
+The fragment shader <code>SSAO/ssdo_blur.frag</code> averages the 16 texels in a 4&times;4 neighborhood (same offset pattern as the SSAO blur) but operates on RGB channels instead of a single float.
+</p>
+
+<h3>Descriptor Management</h3>
+
+<p>
+I created a dedicated <code>ssdo_descriptor_pool</code> in <code>create_ssdo_descriptors()</code> for per-workspace SSDO descriptors.
+Each workspace gets an <code>SSDOWorkspace</code> with a <code>ssdo_raw_descriptors</code> set that binds the raw SSDO image for the blur pass.
+I reused the existing <code>ssao_blur_input_set_layout</code> for this since the layout is identical &mdash; one combined image sampler at binding 0.
+Per-workspace descriptors are updated in <code>update_ssdo_descriptors()</code> on swapchain resize.
+</p>
+
+<p>
+The <code>deferred_set0_GBuffer</code> layout was extended from five bindings (the four G-buffer textures plus SSAO at binding 4) to six, adding binding 5 for the blurred SSDO texture.
+<code>update_deferred_descriptors()</code> now writes both the SSAO blur image view into binding 4 and the SSDO blur image view into binding 5, so the deferred lighting shader can read both at <code>set 0</code> without any changes to the pipeline layout or set binding calls in the render loop.
+The <code>deferred_descriptor_pool</code> was also bumped from <code>5 &times; per_workspace</code> to <code>6 &times; per_workspace</code> combined image sampler descriptors to accommodate the extra binding.
+</p>
+
+<h3>Render Loop Integration</h3>
+
+<p>
+In <code>Tutorial::render()</code>, two new render passes are inserted after the SSAO blur pass and before the main render pass.
+The SSDO pass begins <code>ssdo_render_pass</code> with <code>ssdo_framebuffer</code> (cleared to black &mdash; zero indirect bounce by default), binds the SSDO pipeline with the G-buffer descriptors (set 0), the same SSAO params UBO (set 1), the noise texture (set 2), the World UBO (set 3), and the Lambertian cubemap (set 4), and draws a fullscreen triangle.
+No additional UBO upload is needed &mdash; the SSDO pass reuses the exact same <code>SSAOParams</code> UBO that was already uploaded for the SSAO pass earlier in the frame, so the kernel, matrices, radius, bias, and sample count are all shared.
+The SSDO blur pass follows immediately using the same <code>ssdo_render_pass</code> but with <code>ssdo_blur_framebuffer</code>, binding the blur pipeline with the raw SSDO texture as input.
+</p>
+
+<p>
+The full render order is now:
+</p>
+<ol>
+<li>Upload transforms, lights, shadow parameters, and SSAO params (unchanged).</li>
+<li>Shadow pass for each spot light (unchanged).</li>
+<li>G-buffer pass (unchanged).</li>
+<li>SSAO pass &rarr; SSAO blur pass.</li>
+<li><b>SSDO pass &rarr; SSDO blur pass.</b></li>
+<li>Main render pass (background, deferred lighting or debug view, lines).</li>
+</ol>
+
+<h3>Deferred Lighting Integration</h3>
+
+<p>
+In <code>SSAO/deferred_lighting.frag</code>, I added a new sampler <code>gSSDO</code> at <code>set 0, binding 5</code> that reads the blurred indirect bounce texture.
+The shader samples <code>vec3 indirect_bounce = texture(gSSDO, texCoord).rgb</code> and adds it to the final radiance for all material types.
+Unlike SSAO&rsquo;s scalar <code>ao</code> which multiplies into ambient terms (darkening), the SSDO indirect bounce is purely additive &mdash; it represents new light arriving at the surface from nearby colored geometry.
+For PBR and Lambertian materials, <code>indirect_bounce</code> is added after the diffuse + specular computation.
+For environment and mirror materials, it&rsquo;s added after the cubemap lookup.
+The idea is that even a mirror or environment-sampled surface can receive some bounced light from nearby geometry.
+</p>
+
+<h3>Debug Visualization</h3>
+
+<p>
+The SSDO output can be inspected by pressing <kbd>V</kbd> in debug camera mode to cycle to the SSDO view (mode 6), or by starting with <code>--debug-view ssdo</code>.
+I extended the debug fragment shader <code>SSAO/debug_gbuffer.frag</code> with a new branch that displays the blurred SSDO texture as an RGB color image, making it easy to see where color bleeding is happening and how strong it is.
+Areas with no nearby occluders show up as black (no indirect bounce), while areas near colored surfaces show the bounced color.
+</p>
+
+<p>
+SSDO debug visuals:
+
+</p>
+
+<p>
+<h3>Comparing SSAO and SSDO</h3>
+<br>
+
+With SSAO only:
+<div class="image-row">
+    <img src="report_files/only_ssao.png" alt="only ssao">
+    <img src="report_files/only_ssao_debug.png" alt="only ssao debug">
+</div>
+
+With SSDO only:
+<div class="image-row">
+    <img src="report_files/only_ssdo.png" alt="only ssdo">
+    <img src="report_files/only_ssdo_debug.png" alt="only ssdo debug">
+</div>
+
+With and without both:
+<div class="image-row">
+    <img src="report_files/no_ssao_nor_ssdo.png" alt="no ao nor do">
+    <img src="report_files/ssao_and_ssdo.png" alt="ssao and ssdo">
+</div>
+
 </p>
 
 

@@ -5,6 +5,7 @@ layout(set = 0, binding = 1) uniform sampler2D gNormal;
 layout(set = 0, binding = 2) uniform sampler2D gAlbedo;
 layout(set = 0, binding = 3) uniform sampler2D gDepth;
 layout(set = 0, binding = 4) uniform sampler2D gSSAO;
+layout(set = 0, binding = 5) uniform sampler2D gSSDO;
 
 layout(push_constant) uniform PushConstants {
     uint debug_mode;
@@ -45,6 +46,10 @@ void main() {
     else if (debug_mode == 5u) {
         float ao = texture(gSSAO, texCoord).r;
         outColor = vec4(vec3(ao), 1.0);
+    }
+    else if (debug_mode == 6u) {
+        vec3 ssdo = texture(gSSDO, texCoord).rgb;
+        outColor = vec4(ssdo, 1.0);
     }
     else {
         outColor = vec4(0.0, 0.0, 0.0, 1.0);

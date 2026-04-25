@@ -537,6 +537,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		else if (dv == "albedo") gbuf_debug_view = GBufDebugView::Albedo;
 		else if (dv == "depth") gbuf_debug_view = GBufDebugView::Depth;
 		else if (dv == "ssao") gbuf_debug_view = GBufDebugView::SSAO;
+		else if (dv == "ssdo") gbuf_debug_view = GBufDebugView::SSDO;
 		else if (!dv.empty()) {
 			std::cerr << "[SSAO/SSDO]: Unknown --debug-view value '" << dv << "'; ignoring." << std::endl;
 		}
@@ -853,6 +854,16 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			ssao_blur_input_set_layout);
 	}
 
+	{	// SSDO: render pass, pipelines, descriptors
+		create_ssdo_render_pass();
+		create_ssdo_descriptors();
+		ssdo_pipeline.create(rtg, ssdo_render_pass, 0,
+			deferred_set0_GBuffer, ssao_params_set_layout, ssao_noise_set_layout,
+			objects_pipeline.set0_World, objects_pipeline.set4_LambertianCubemap);
+		ssdo_blur_pipeline.create(rtg, ssdo_render_pass, 0,
+			ssao_blur_input_set_layout);
+	}
+
 	{ // create the texture descriptor pool
 		uint32_t per_texture = uint32_t(textures.size());
 		uint32_t per_normal_map = uint32_t(normal_map_textures.size());
@@ -1096,6 +1107,20 @@ Tutorial::~Tutorial() {
 	//(not using VK macro to avoid throw-ing in destructor)
 	if (VkResult result = vkDeviceWaitIdle(rtg.device); result != VK_SUCCESS) {
 		std::cerr << "Failed to vkDeviceWaitIdle in Tutorial::~Tutorial [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
+	}
+
+	// SSDO: cleanup
+	ssdo_blur_pipeline.destroy(rtg);
+	ssdo_pipeline.destroy(rtg);
+	ssdo_workspaces.clear();
+	if (ssdo_descriptor_pool != VK_NULL_HANDLE) {
+		vkDestroyDescriptorPool(rtg.device, ssdo_descriptor_pool, nullptr);
+		ssdo_descriptor_pool = VK_NULL_HANDLE;
+	}
+	destroy_ssdo_images();
+	if (ssdo_render_pass != VK_NULL_HANDLE) {
+		vkDestroyRenderPass(rtg.device, ssdo_render_pass, nullptr);
+		ssdo_render_pass = VK_NULL_HANDLE;
 	}
 
 	// SSAO: cleanup
@@ -1423,14 +1448,17 @@ void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 	// SSAO/SSDO: create G-buffer images at swapchain resolution
 	create_gbuffer_images(swapchain.extent);
 	create_ssao_images(swapchain.extent);
+	create_ssdo_images(swapchain.extent);
 	for (uint32_t i = 0; i < uint32_t(deferred_workspaces.size()); ++i) {
 		update_deferred_descriptors(i);
 		update_ssao_descriptors(i);
+		update_ssdo_descriptors(i);
 	}
 }
 
 void Tutorial::destroy_framebuffers() {
 	// refsol::Tutorial_destroy_framebuffers(rtg, &swapchain_depth_image, &swapchain_depth_image_view, &swapchain_framebuffers);
+	destroy_ssdo_images();
 	destroy_ssao_images();
 	destroy_gbuffer_images();
 
@@ -1882,7 +1910,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_pipeline.layout, 1, 1, &sw.ssao_params_descriptors, 0, nullptr);
 			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_pipeline.layout, 2, 1, &ssao_noise_descriptors, 0, nullptr);
 
-			vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
+			// vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
 			vkCmdEndRenderPass(workspace.command_buffer);
 		}
 
@@ -1906,7 +1934,66 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_blur_pipeline.handle);
 			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_blur_pipeline.layout, 0, 1, &sw.ssao_raw_descriptors, 0, nullptr);
 
-			vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
+			// vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
+			vkCmdEndRenderPass(workspace.command_buffer);
+		}
+	}
+
+	// ── SSDO PASS ──
+	if (ssdo_framebuffer != VK_NULL_HANDLE && ssdo_pipeline.handle != VK_NULL_HANDLE) {
+		auto &sdw = ssdo_workspaces[render_params.workspace_index];
+
+		{
+			VkClearValue clear{.color{.float32{0.0f, 0.0f, 0.0f, 0.0f}}};
+			VkRenderPassBeginInfo begin{
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = ssdo_render_pass,
+				.framebuffer = ssdo_framebuffer,
+				.renderArea{.offset = {0, 0}, .extent = rtg.swapchain_extent},
+				.clearValueCount = 1, .pClearValues = &clear,
+			};
+			vkCmdBeginRenderPass(workspace.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
+
+			VkRect2D scissor{.offset = {0, 0}, .extent = rtg.swapchain_extent};
+			vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			VkViewport viewport{.x = 0.0f, .y = 0.0f, .width = float(rtg.swapchain_extent.width), .height = float(rtg.swapchain_extent.height), .minDepth = 0.0f, .maxDepth = 1.0f};
+			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
+
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssdo_pipeline.handle);
+
+			auto &dw = deferred_workspaces[render_params.workspace_index];
+			auto &sw = ssao_workspaces[render_params.workspace_index];
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssdo_pipeline.layout, 0, 1, &dw.gbuffer_descriptors, 0, nullptr);
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssdo_pipeline.layout, 1, 1, &sw.ssao_params_descriptors, 0, nullptr);
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssdo_pipeline.layout, 2, 1, &ssao_noise_descriptors, 0, nullptr);
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssdo_pipeline.layout, 3, 1, &workspace.World_descriptors, 0, nullptr);
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssdo_pipeline.layout, 4, 1, &lambertian_cubemap_descriptors, 0, nullptr);
+
+			// vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
+			vkCmdEndRenderPass(workspace.command_buffer);
+		}
+
+		// ── SSDO BLUR PASS ──
+		{
+			VkClearValue clear{.color{.float32{0.0f, 0.0f, 0.0f, 0.0f}}};
+			VkRenderPassBeginInfo begin{
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = ssdo_render_pass,
+				.framebuffer = ssdo_blur_framebuffer,
+				.renderArea{.offset = {0, 0}, .extent = rtg.swapchain_extent},
+				.clearValueCount = 1, .pClearValues = &clear,
+			};
+			vkCmdBeginRenderPass(workspace.command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
+
+			VkRect2D scissor{.offset = {0, 0}, .extent = rtg.swapchain_extent};
+			vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			VkViewport viewport{.x = 0.0f, .y = 0.0f, .width = float(rtg.swapchain_extent.width), .height = float(rtg.swapchain_extent.height), .minDepth = 0.0f, .maxDepth = 1.0f};
+			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
+
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssdo_blur_pipeline.handle);
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssdo_blur_pipeline.layout, 0, 1, &sdw.ssdo_raw_descriptors, 0, nullptr);
+
+			// vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
 			vkCmdEndRenderPass(workspace.command_buffer);
 		}
 	}
@@ -2670,7 +2757,7 @@ void Tutorial::on_input(InputEvent const &evt) {
 			else if (evt.key.key == GLFW_KEY_V)
 			{
 				gbuf_debug_view = GBufDebugView((uint32_t(gbuf_debug_view) + 1) % uint32_t(GBufDebugView::Count));
-				static const char *names[] = {"None", "Position", "Normal", "Albedo", "Depth", "SSAO"};
+				static const char *names[] = {"None", "Position", "Normal", "Albedo", "Depth", "SSAO", "SSDO"};
 				std::cout << "[SSAO/SSDO]: debug view = " << names[uint32_t(gbuf_debug_view)] << std::endl;
 			}
 			return;

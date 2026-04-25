@@ -223,7 +223,7 @@ void Tutorial::destroy_gbuffer_images() {
 
 void Tutorial::create_deferred_descriptors() {
 	{
-		std::array<VkDescriptorSetLayoutBinding, 5> bindings{
+		std::array<VkDescriptorSetLayoutBinding, 6> bindings{
 			VkDescriptorSetLayoutBinding{
 				.binding = 0,
 				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -254,6 +254,12 @@ void Tutorial::create_deferred_descriptors() {
 				.descriptorCount = 1,
 				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
 			},
+			VkDescriptorSetLayoutBinding{
+				.binding = 5,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+			},
 		};
 
 		VkDescriptorSetLayoutCreateInfo ci{
@@ -270,7 +276,7 @@ void Tutorial::create_deferred_descriptors() {
 		std::array<VkDescriptorPoolSize, 1> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = 5 * per_workspace,
+				.descriptorCount = 6 * per_workspace,
 			},
 		};
 
@@ -304,7 +310,13 @@ void Tutorial::update_deferred_descriptors(uint32_t workspace_index) {
 		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 	};
 
-	std::array<VkDescriptorImageInfo, 5> img_infos{
+	VkDescriptorImageInfo ssdo_info{
+		.sampler = gbuf_sampler,
+		.imageView = (ssdo_blur_image_view != VK_NULL_HANDLE) ? ssdo_blur_image_view : gbuf_albedo_view,
+		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	};
+
+	std::array<VkDescriptorImageInfo, 6> img_infos{
 		VkDescriptorImageInfo{
 			.sampler = gbuf_sampler,
 			.imageView = gbuf_position_view,
@@ -326,10 +338,11 @@ void Tutorial::update_deferred_descriptors(uint32_t workspace_index) {
 			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
 		},
 		ao_info,
+		ssdo_info,
 	};
 
-	std::array<VkWriteDescriptorSet, 5> writes{};
-	for (uint32_t i = 0; i < 5; ++i) {
+	std::array<VkWriteDescriptorSet, 6> writes{};
+	for (uint32_t i = 0; i < 6; ++i) {
 		writes[i] = VkWriteDescriptorSet{
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet = dw.gbuffer_descriptors,
@@ -721,6 +734,190 @@ void Tutorial::update_ssao_descriptors(uint32_t workspace_index) {
 	VkWriteDescriptorSet write{
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.dstSet = sw.ssao_raw_descriptors,
+		.dstBinding = 0, .dstArrayElement = 0,
+		.descriptorCount = 1,
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = &raw_info,
+	};
+	vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SSDO
+// ──────────────────────────────────────────────────────────────────────────────
+
+void Tutorial::create_ssdo_render_pass() {
+	VkAttachmentDescription attachment{
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	};
+
+	VkAttachmentReference color_ref{.attachment = 0, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+
+	VkSubpassDescription subpass{
+		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		.colorAttachmentCount = 1,
+		.pColorAttachments = &color_ref,
+	};
+
+	VkSubpassDependency dep{
+		.srcSubpass = 0,
+		.dstSubpass = VK_SUBPASS_EXTERNAL,
+		.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+	};
+
+	VkRenderPassCreateInfo ci{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+		.attachmentCount = 1,
+		.pAttachments = &attachment,
+		.subpassCount = 1,
+		.pSubpasses = &subpass,
+		.dependencyCount = 1,
+		.pDependencies = &dep,
+	};
+
+	VK(vkCreateRenderPass(rtg.device, &ci, nullptr, &ssdo_render_pass));
+}
+
+void Tutorial::create_ssdo_images(VkExtent2D extent) {
+	destroy_ssdo_images();
+
+	auto make_rgba16f = [&]() {
+		return rtg.helpers.create_image(
+			extent, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		);
+	};
+
+	ssdo_image = make_rgba16f();
+	ssdo_blur_image = make_rgba16f();
+
+	auto make_view = [&](VkImage image) {
+		VkImageView view = VK_NULL_HANDLE;
+		VkImageViewCreateInfo ci{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = image,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0, .levelCount = 1,
+				.baseArrayLayer = 0, .layerCount = 1,
+			},
+		};
+		VK(vkCreateImageView(rtg.device, &ci, nullptr, &view));
+		return view;
+	};
+
+	ssdo_image_view = make_view(ssdo_image.handle);
+	ssdo_blur_image_view = make_view(ssdo_blur_image.handle);
+
+	{
+		VkFramebufferCreateInfo ci{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = ssdo_render_pass,
+			.attachmentCount = 1,
+			.pAttachments = &ssdo_image_view,
+			.width = extent.width,
+			.height = extent.height,
+			.layers = 1,
+		};
+		VK(vkCreateFramebuffer(rtg.device, &ci, nullptr, &ssdo_framebuffer));
+	}
+
+	{
+		VkFramebufferCreateInfo ci{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = ssdo_render_pass,
+			.attachmentCount = 1,
+			.pAttachments = &ssdo_blur_image_view,
+			.width = extent.width,
+			.height = extent.height,
+			.layers = 1,
+		};
+		VK(vkCreateFramebuffer(rtg.device, &ci, nullptr, &ssdo_blur_framebuffer));
+	}
+}
+
+void Tutorial::destroy_ssdo_images() {
+	if (ssdo_blur_framebuffer != VK_NULL_HANDLE) {
+		vkDestroyFramebuffer(rtg.device, ssdo_blur_framebuffer, nullptr);
+		ssdo_blur_framebuffer = VK_NULL_HANDLE;
+	}
+	if (ssdo_framebuffer != VK_NULL_HANDLE) {
+		vkDestroyFramebuffer(rtg.device, ssdo_framebuffer, nullptr);
+		ssdo_framebuffer = VK_NULL_HANDLE;
+	}
+	if (ssdo_blur_image_view != VK_NULL_HANDLE) {
+		vkDestroyImageView(rtg.device, ssdo_blur_image_view, nullptr);
+		ssdo_blur_image_view = VK_NULL_HANDLE;
+	}
+	if (ssdo_image_view != VK_NULL_HANDLE) {
+		vkDestroyImageView(rtg.device, ssdo_image_view, nullptr);
+		ssdo_image_view = VK_NULL_HANDLE;
+	}
+	if (ssdo_blur_image.handle != VK_NULL_HANDLE) {
+		rtg.helpers.destroy_image(std::move(ssdo_blur_image));
+	}
+	if (ssdo_image.handle != VK_NULL_HANDLE) {
+		rtg.helpers.destroy_image(std::move(ssdo_image));
+	}
+}
+
+void Tutorial::create_ssdo_descriptors() {
+	uint32_t per_workspace = uint32_t(workspaces.size());
+
+	{
+		std::array<VkDescriptorPoolSize, 1> pool_sizes{
+			VkDescriptorPoolSize{
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = per_workspace,
+			},
+		};
+
+		VkDescriptorPoolCreateInfo ci{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.maxSets = per_workspace,
+			.poolSizeCount = uint32_t(pool_sizes.size()),
+			.pPoolSizes = pool_sizes.data(),
+		};
+		VK(vkCreateDescriptorPool(rtg.device, &ci, nullptr, &ssdo_descriptor_pool));
+	}
+
+	ssdo_workspaces.resize(per_workspace);
+	for (auto &sdw : ssdo_workspaces) {
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = ssdo_descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &ssao_blur_input_set_layout,
+		};
+		VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &sdw.ssdo_raw_descriptors));
+	}
+}
+
+void Tutorial::update_ssdo_descriptors(uint32_t workspace_index) {
+	auto &sdw = ssdo_workspaces[workspace_index];
+
+	VkDescriptorImageInfo raw_info{
+		.sampler = gbuf_sampler,
+		.imageView = ssdo_image_view,
+		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	};
+	VkWriteDescriptorSet write{
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = sdw.ssdo_raw_descriptors,
 		.dstBinding = 0, .dstArrayElement = 0,
 		.descriptorCount = 1,
 		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,

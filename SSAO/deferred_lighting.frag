@@ -7,6 +7,7 @@ layout(set = 0, binding = 1) uniform sampler2D gNormal;
 layout(set = 0, binding = 2) uniform sampler2D gAlbedo;
 layout(set = 0, binding = 3) uniform sampler2D gDepth;
 layout(set = 0, binding = 4) uniform sampler2D gSSAO;
+layout(set = 0, binding = 5) uniform sampler2D gSSDO;
 
 // set 1: World UBO (same as objects.frag set 0)
 layout(set = 1, binding = 0, std140) uniform World {
@@ -285,15 +286,16 @@ void main() {
 
     vec3 eye = vec3(eye_x, eye_y, eye_z);
     float ao = texture(gSSAO, texCoord).r;
+    vec3 indirect_bounce = texture(gSSDO, texCoord).rgb;
     vec3 radiance;
 
     if (material_type == 1u) {
-        radiance = texture(CUBEMAP, n).rgb * ao;
+        radiance = texture(CUBEMAP, n).rgb * ao + indirect_bounce;
     }
     else if (material_type == 2u) {
         vec3 view_dir = normalize(worldPos - eye);
         vec3 refl = reflect(view_dir, n);
-        radiance = texture(CUBEMAP, refl).rgb * ao;
+        radiance = texture(CUBEMAP, refl).rgb * ao + indirect_bounce;
     }
     else if (material_type == 3u) {
         vec3 F0 = mix(vec3(0.04), albedo, metalness);
@@ -321,7 +323,7 @@ void main() {
         vec3 irradiance = irradianceIbl * ao + irradianceDirect;
         vec3 diffuse = kD * albedo * irradiance;
 
-        radiance = diffuse + specular;
+        radiance = diffuse + specular + indirect_bounce;
     }
     else {
         vec3 irradianceIbl;
@@ -334,7 +336,7 @@ void main() {
         vec3 irradianceDirect = evalDiffuseDirectLights(n, worldPos);
         vec3 irradiance = irradianceIbl * ao + irradianceDirect;
 
-        radiance = irradiance * albedo;
+        radiance = irradiance * albedo + indirect_bounce;
     }
 
     outColor = vec4(apply_tone_map(radiance, exposure_scale, tone_map_mode), 1.0);

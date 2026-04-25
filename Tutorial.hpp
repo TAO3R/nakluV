@@ -810,7 +810,8 @@ struct Tutorial : RTG::Application {
 		Albedo = 3,
 		Depth = 4,
 		SSAO = 5,
-		Count = 6,
+		SSDO = 6,
+		Count = 7,
 	};
 	GBufDebugView gbuf_debug_view = GBufDebugView::None;
 
@@ -973,4 +974,51 @@ struct Tutorial : RTG::Application {
 	void update_ssao_descriptors(uint32_t workspace_index);
 	void generate_ssao_kernel();
 	void create_ssao_noise_texture();
+
+
+	// SSDO
+
+	Helpers::AllocatedImage ssdo_image;
+	VkImageView ssdo_image_view = VK_NULL_HANDLE;
+	Helpers::AllocatedImage ssdo_blur_image;
+	VkImageView ssdo_blur_image_view = VK_NULL_HANDLE;
+	VkRenderPass ssdo_render_pass = VK_NULL_HANDLE;
+	VkFramebuffer ssdo_framebuffer = VK_NULL_HANDLE;
+	VkFramebuffer ssdo_blur_framebuffer = VK_NULL_HANDLE;
+
+	void create_ssdo_render_pass();
+	void create_ssdo_images(VkExtent2D extent);
+	void destroy_ssdo_images();
+
+	struct SSDOPipeline {
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass,
+			VkDescriptorSetLayout set0_GBuffer,
+			VkDescriptorSetLayout set1_SSAOParams,
+			VkDescriptorSetLayout set2_Noise,
+			VkDescriptorSetLayout set3_World,
+			VkDescriptorSetLayout set4_LambertianCubemap);
+		void destroy(RTG &);
+	} ssdo_pipeline;
+
+	struct SSDOBlurPipeline {
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass,
+			VkDescriptorSetLayout set0_SSDOInput);
+		void destroy(RTG &);
+	} ssdo_blur_pipeline;
+
+	VkDescriptorPool ssdo_descriptor_pool = VK_NULL_HANDLE;
+
+	struct SSDOWorkspace {
+		VkDescriptorSet ssdo_raw_descriptors = VK_NULL_HANDLE;
+	};
+	std::vector<SSDOWorkspace> ssdo_workspaces;
+
+	void create_ssdo_descriptors();
+	void update_ssdo_descriptors(uint32_t workspace_index);
 };

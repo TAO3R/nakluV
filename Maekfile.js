@@ -108,6 +108,19 @@ const ssao_blur_shaders = [
 ];
 main_objs.push( maek.CPP('SSAO/SSAOBlurPipeline.cpp', undefined, { depends:[...ssao_blur_shaders] } ) );
 
+// SSDO: indirect bounce and blur passes
+const ssdo_shaders = [
+	fullscreen_vert,
+	maek.GLSLC('SSAO/ssdo.frag'),
+];
+main_objs.push( maek.CPP('SSAO/SSDOPipeline.cpp', undefined, { depends:[...ssdo_shaders] } ) );
+
+const ssdo_blur_shaders = [
+	fullscreen_vert,
+	maek.GLSLC('SSAO/ssdo_blur.frag'),
+];
+main_objs.push( maek.CPP('SSAO/SSDOBlurPipeline.cpp', undefined, { depends:[...ssdo_blur_shaders] } ) );
+
 // const prebuilt_objs = [ ];
 
 //use the prebuilt refsol.o unless refsol.cpp exists:
